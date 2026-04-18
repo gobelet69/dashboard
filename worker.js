@@ -41,6 +41,24 @@ export default {
       });
     }
 
+    if (path === '/api/layout' && req.method === 'POST') {
+      const body = await req.json();
+      const { widget_id, col_start, col_span, row_start, row_span, open, config } = body;
+      if (!['vault', 'todolist', 'habits', 'courses'].includes(widget_id)) {
+        return new Response('bad widget', { status: 400 });
+      }
+      await env.DASHBOARD_DB.prepare(
+        `UPDATE widget_layout
+         SET col_start = ?, col_span = ?, row_start = ?, row_span = ?, open = ?, config = ?, updated_at = ?
+         WHERE username = ? AND widget_id = ?`
+      ).bind(
+        col_start|0, col_span|0, row_start|0, row_span|0, open ? 1 : 0,
+        typeof config === 'string' ? config : JSON.stringify(config || {}),
+        Date.now(), user.username, widget_id
+      ).run();
+      return new Response('OK');
+    }
+
     if (path === '/' || path === '') {
       const layout = await loadLayout(env, user.username);
       return new Response(JSON.stringify({ user: user.username, layout }, null, 2), {
