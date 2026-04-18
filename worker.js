@@ -47,6 +47,17 @@ input[type=text]{background:var(--surface-soft);border:1px solid var(--border);c
 .vault .row{display:block;padding:6px 8px;border-radius:6px;cursor:pointer;color:var(--text)}
 .vault .row:hover{background:var(--surface-hover)}
 .vault .row.file{color:var(--accent)}
+.todo .todo-bar{margin-bottom:8px}
+.todo select{background:var(--surface-soft);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px;font:inherit}
+.todo .kanban{display:flex;gap:8px;overflow-x:auto;height:calc(100% - 30px);align-items:flex-start}
+.kanban-col{background:var(--surface-soft);border:1px solid var(--border);border-radius:8px;padding:8px;min-width:200px;flex:0 0 200px;display:flex;flex-direction:column;gap:6px}
+.kanban-col.drag-over{background:var(--surface-hover)}
+.kanban-col-head{font-weight:600;font-size:12px;padding:4px 6px;border-top:3px solid var(--accent)}
+.kanban-cards{display:flex;flex-direction:column;gap:4px;min-height:24px}
+.kanban-card{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;display:flex;justify-content:space-between;align-items:center;cursor:grab}
+.kanban-card .delcard{background:transparent;border:none;color:var(--text-muted);padding:0 4px}
+.kanban-card .delcard:hover{color:#f43f5e}
+.addcard input{font-size:12px;padding:4px 6px}
 `;
 
 const CLIENT_JS = `
@@ -135,6 +146,83 @@ document.addEventListener('click', async e => {
   const r = await fetch('/dashboard/api/vault?path=' + encodeURIComponent(newPath));
   document.querySelector('[data-body=vault]').innerHTML = await r.text();
 });
+
+document.addEventListener('change', async e => {
+  const s = e.target.closest('[data-todo-board]');
+  if (!s) return;
+  const bid = s.value;
+  const el = document.querySelector('[data-widget=todolist]');
+  const st = el.style;
+  const col = st.gridColumn.match(/(\\d+) ?\\/ ?span ?(\\d+)/);
+  const row = st.gridRow.match(/(\\d+) ?\\/ ?span ?(\\d+)/);
+  await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ widget_id:'todolist', col_start:+col[1], col_span:+col[2], row_start:+row[1], row_span:+row[2], open:1, config: JSON.stringify({ board_id:bid }) })
+  });
+  const r = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
+  document.querySelector('[data-body=todolist]').innerHTML = await r.text();
+});
+
+document.addEventListener('submit', async e => {
+  const f = e.target.closest('[data-addcard]');
+  if (!f) return;
+  e.preventDefault();
+  const fd = new FormData(f);
+  fd.set('listId', f.dataset.addcard);
+  await fetch('/dashboard/api/todo/card/create', { method:'POST', body: fd });
+  const sel = document.querySelector('[data-todo-board]');
+  const bid = sel ? sel.value : '';
+  const r = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
+  document.querySelector('[data-body=todolist]').innerHTML = await r.text();
+});
+
+document.addEventListener('click', async e => {
+  const d = e.target.closest('[data-delcard]');
+  if (!d) return;
+  e.preventDefault();
+  const fd = new FormData(); fd.set('id', d.dataset.delcard);
+  await fetch('/dashboard/api/todo/card/delete', { method:'POST', body: fd });
+  d.closest('.kanban-card').remove();
+});
+
+let draggingCard = null;
+document.addEventListener('dragstart', e => {
+  const c = e.target.closest('.kanban-card');
+  if (!c) return;
+  draggingCard = c;
+  e.dataTransfer.effectAllowed = 'move';
+});
+document.addEventListener('dragover', e => {
+  const col = e.target.closest('.kanban-col');
+  if (!col || !draggingCard) return;
+  e.preventDefault();
+  col.classList.add('drag-over');
+});
+document.addEventListener('dragleave', e => {
+  const col = e.target.closest('.kanban-col');
+  if (col) col.classList.remove('drag-over');
+});
+document.addEventListener('drop', async e => {
+  const col = e.target.closest('.kanban-col');
+  if (!col || !draggingCard) return;
+  e.preventDefault();
+  col.classList.remove('drag-over');
+  const newListId = col.dataset.list;
+  const cardId = draggingCard.dataset.card;
+  const cards = [...col.querySelectorAll('.kanban-card')];
+  let npos = cards.length;
+  for (let i = 0; i < cards.length; i++) {
+    const rr = cards[i].getBoundingClientRect();
+    if (e.clientY < rr.top + rr.height / 2) { npos = i; break; }
+  }
+  const fd = new FormData();
+  fd.set('cardId', cardId); fd.set('newListId', newListId); fd.set('newPosition', npos);
+  await fetch('/dashboard/api/todo/card/move', { method:'POST', body: fd });
+  const sel = document.querySelector('[data-todo-board]');
+  const bid = sel ? sel.value : '';
+  const r = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
+  document.querySelector('[data-body=todolist]').innerHTML = await r.text();
+  draggingCard = null;
+});
 `;
 
 async function renderVault(env, username, configJson) {
@@ -172,6 +260,54 @@ async function renderVault(env, username, configJson) {
   <div class="vault">
     <div class="crumbs">${crumbs.join('')}</div>
     <div class="rows">${folderRows}${fileRows || (folders.length?'':'<div class="muted">empty</div>')}</div>
+  </div>`;
+}
+
+async function renderTodo(env, username, configJson) {
+  let boardId = null;
+  try { boardId = JSON.parse(configJson || '{}').board_id; } catch {}
+  const { results: boards } = await env.TODO_DB.prepare(
+    'SELECT id, name FROM boards WHERE username = ? ORDER BY created_at ASC'
+  ).bind(username).all();
+
+  if (!boards.length) {
+    return '<div class="muted">No boards yet. Create one in <a target="_top" href="/todo">the main app</a>.</div>';
+  }
+  if (!boardId || !boards.find(b => b.id === boardId)) boardId = boards[0].id;
+
+  const { results: lists } = await env.TODO_DB.prepare(
+    'SELECT * FROM lists WHERE board_id = ? ORDER BY position ASC'
+  ).bind(boardId).all();
+  const { results: cards } = await env.TODO_DB.prepare(
+    'SELECT * FROM cards WHERE board_id = ? ORDER BY position ASC'
+  ).bind(boardId).all();
+
+  const select = `<select data-todo-board>${
+    boards.map(b => `<option value="${esc(b.id)}" ${b.id===boardId?'selected':''}>${esc(b.name)}</option>`).join('')
+  }</select>`;
+
+  const cols = lists.map(l => {
+    const listCards = cards.filter(c => c.list_id === l.id);
+    return `
+    <div class="kanban-col" data-list="${esc(l.id)}">
+      <div class="kanban-col-head" style="border-top-color:${esc(l.color||'#bb86fc')}">${esc(l.name)}</div>
+      <div class="kanban-cards">
+        ${listCards.map(c => `
+          <div class="kanban-card" draggable="true" data-card="${esc(c.id)}" data-pos="${c.position}">
+            <span>${esc(c.title)}</span>
+            <button class="delcard" data-delcard="${esc(c.id)}" title="Delete">×</button>
+          </div>`).join('')}
+      </div>
+      <form class="addcard" data-addcard="${esc(l.id)}">
+        <input type="text" name="title" placeholder="+ add card" required>
+      </form>
+    </div>`;
+  }).join('');
+
+  return `
+  <div class="todo">
+    <div class="todo-bar">${select}</div>
+    <div class="kanban">${cols || '<div class="muted">No lists in this board.</div>'}</div>
   </div>`;
 }
 
@@ -252,6 +388,43 @@ export default {
       });
     }
 
+    if (path === '/api/todo/card/create' && req.method === 'POST') {
+      const fd = await req.formData();
+      const listId = fd.get('listId'), title = fd.get('title');
+      const list = await env.TODO_DB.prepare('SELECT board_id FROM lists WHERE id = ? AND username = ?').bind(listId, user.username).first();
+      if (!list) return new Response('no list', { status: 404 });
+      const { results: existing } = await env.TODO_DB.prepare('SELECT position FROM cards WHERE list_id = ? ORDER BY position DESC LIMIT 1').bind(listId).all();
+      const pos = existing.length ? existing[0].position + 1 : 0;
+      await env.TODO_DB.prepare(
+        'INSERT INTO cards (id, list_id, board_id, username, title, description, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(crypto.randomUUID(), listId, list.board_id, user.username, title, '', pos, Date.now()).run();
+      return new Response('OK');
+    }
+
+    if (path === '/api/todo/card/move' && req.method === 'POST') {
+      const fd = await req.formData();
+      const cid = fd.get('cardId'), nlid = fd.get('newListId'), npos = parseInt(fd.get('newPosition'));
+      const card = await env.TODO_DB.prepare('SELECT * FROM cards WHERE id = ? AND username = ?').bind(cid, user.username).first();
+      if (!card) return new Response('no card', { status: 404 });
+      const list = await env.TODO_DB.prepare('SELECT board_id FROM lists WHERE id = ?').bind(nlid).first();
+      await env.TODO_DB.prepare('UPDATE cards SET position = position + 1 WHERE list_id = ? AND position >= ?').bind(nlid, npos).run();
+      await env.TODO_DB.prepare('UPDATE cards SET list_id = ?, board_id = ?, position = ? WHERE id = ?').bind(nlid, list.board_id, npos, cid).run();
+      return new Response('OK');
+    }
+
+    if (path === '/api/todo/card/delete' && req.method === 'POST') {
+      const fd = await req.formData();
+      await env.TODO_DB.prepare('DELETE FROM cards WHERE id = ? AND username = ?').bind(fd.get('id'), user.username).run();
+      return new Response('OK');
+    }
+
+    if (path === '/api/todo/board' && req.method === 'GET') {
+      const bid = url.searchParams.get('boardId');
+      return new Response(await renderTodo(env, user.username, JSON.stringify({ board_id: bid })), {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      });
+    }
+
     if (path === '/api/layout' && req.method === 'POST') {
       const body = await req.json();
       const { widget_id, col_start, col_span, row_start, row_span, open, config } = body;
@@ -273,9 +446,10 @@ export default {
     if (path === '/' || path === '') {
       const layout = await loadLayout(env, user.username);
       const vaultLayout = layout.find(w => w.widget_id === 'vault');
+      const todoLayout = layout.find(w => w.widget_id === 'todolist');
       const widgetBodies = {
         vault: vaultLayout.open ? await renderVault(env, user.username, vaultLayout.config) : '',
-        todolist: '<div class="muted">todolist widget pending…</div>',
+        todolist: todoLayout.open ? await renderTodo(env, user.username, todoLayout.config) : '',
         habits: '<div class="muted">habits widget pending…</div>',
         courses: '<div class="muted">courses widget pending…</div>',
       };
