@@ -93,10 +93,25 @@ input[type=text]{background:var(--surface-soft);border:1px solid var(--border);c
 .course-tile{display:flex;align-items:center;gap:6px;background:var(--surface-soft);border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--text);font-size:12px}
 .course-tile:hover{background:var(--surface-hover);color:var(--text)}
 .course-tile .emoji{font-size:14px}
+.blocus .bloc-bar{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.blocus select{background:var(--surface-soft);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px;font:inherit}
+.blocus .bloc-views{display:flex;gap:4px}
+.bloc-view{font-size:11px;padding:3px 8px}
+.bloc-view.active{background:var(--accent);color:#111;border-color:var(--accent)}
+.bloc-table{width:100%;border-collapse:collapse;font-size:12px}
+.bloc-table th{text-align:left;color:var(--text-muted);font-weight:500;padding:4px}
+.bloc-table td{padding:2px;vertical-align:top}
+.bloc-day{color:var(--text-secondary);white-space:nowrap}
+.bloc-cell{border-radius:4px;padding:4px 6px;color:#111;font-weight:500;min-height:24px}
+.bloc-cell.empty{background:transparent;color:var(--text-muted);font-weight:400}
+.bloc-cell.exam{outline:2px solid #f43f5e}
 `;
 
 const CLIENT_JS = `
 const grid = document.getElementById('grid');
+
+// rectOf is the canonical name used by Task-2+ handlers; alias widgetRect for Task 3 compatibility
+function rectOf(el){ return widgetRect(el); }
 
 function widgetRect(el){
   const s = el.style;
@@ -270,6 +285,31 @@ document.addEventListener('click', async e => {
   await fetch('/dashboard/api/habits/toggle', { method:'POST', body: fd });
   c.classList.toggle('done');
 });
+
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-blocus-view]');
+  if (!b) return;
+  const widget = b.closest('[data-instance]');
+  const instanceId = widget.dataset.instance;
+  const sel = widget.querySelector('[data-blocus-board]');
+  const currentBoard = sel ? sel.value : null;
+  const newView = b.dataset.blocusView;
+  await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ instance_id: instanceId, ...rectOf(widget), open:1, config: JSON.stringify({ board_id: currentBoard, view: newView }) })
+  });
+  location.reload();
+});
+document.addEventListener('change', async e => {
+  const s = e.target.closest('[data-blocus-board]');
+  if (!s) return;
+  const widget = s.closest('[data-instance]');
+  const active = widget.querySelector('[data-blocus-view].active');
+  const view = active ? active.dataset.blocusView : 'week';
+  await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ instance_id: widget.dataset.instance, ...rectOf(widget), open:1, config: JSON.stringify({ board_id: s.value, view }) })
+  });
+  location.reload();
+});
 `;
 
 async function renderVault(env, username, configJson) {
@@ -442,8 +482,85 @@ async function renderCourses(env, username) {
   }).join('');
 }
 
+function blocusRange(view, startDate, endDate) {
+  // returns { from, to } as YYYY-MM-DD inclusive
+  const today = new Date(); today.setHours(0,0,0,0);
+  const toYMD = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  if (view === 'all') return { from: startDate, to: endDate };
+  const days = view === 'week' ? 7 : view === 'two' ? 14 : 30;
+  const from = toYMD(today);
+  const end = new Date(today); end.setDate(end.getDate() + days - 1);
+  const to = toYMD(end);
+  // Clamp to board range
+  return { from: from < startDate ? startDate : from, to: to > endDate ? endDate : to };
+}
+
 async function renderBlocus(env, username, configJson) {
-  return '<div class="muted">blocus coming in Task 2</div>';
+  let cfg = {};
+  try { cfg = JSON.parse(configJson || '{}'); } catch {}
+  const view = cfg.view || 'week';
+  const { results: boards } = await env.TODO_DB.prepare(
+    'SELECT * FROM blocus_boards WHERE username = ? ORDER BY created_at ASC'
+  ).bind(username).all();
+  if (!boards.length) {
+    return '<div class="muted">No blocus calendar yet. Create one in <a target="_top" href="/todo">todolist</a>.</div>';
+  }
+  let boardId = cfg.board_id;
+  if (!boardId || !boards.find(b => b.id === boardId)) boardId = boards[0].id;
+  const board = boards.find(b => b.id === boardId);
+
+  const { results: courses } = await env.TODO_DB.prepare(
+    'SELECT * FROM blocus_courses WHERE blocus_id = ? ORDER BY position ASC'
+  ).bind(boardId).all();
+  const { results: sections } = await env.TODO_DB.prepare(
+    'SELECT * FROM blocus_course_sections WHERE blocus_id = ? ORDER BY position ASC'
+  ).bind(boardId).all();
+  const { results: slots } = await env.TODO_DB.prepare(
+    'SELECT * FROM blocus_slots WHERE blocus_id = ?'
+  ).bind(boardId).all();
+
+  const courseById = Object.fromEntries(courses.map(c => [c.id, c]));
+  const sectionById = Object.fromEntries(sections.map(s => [s.id, s]));
+  const slotKey = (day, period) => `${day}|${period}`;
+  const slotByKey = {};
+  for (const s of slots) slotByKey[slotKey(s.day, s.period)] = s;
+
+  const { from, to } = blocusRange(view, board.start_date, board.end_date);
+  const days = [];
+  for (let d = new Date(from); d <= new Date(to); d.setDate(d.getDate() + 1)) {
+    days.push(new Date(d));
+  }
+  const fmtDay = d => d.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: '2-digit' });
+  const ymdDay = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+  const cell = (day, period) => {
+    const s = slotByKey[slotKey(ymdDay(day), period)];
+    if (!s) return `<div class="bloc-cell empty">·</div>`;
+    const c = courseById[s.course_id];
+    const sec = s.section_id ? sectionById[s.section_id] : null;
+    const label = c ? (sec ? `${c.name} · ${sec.name}` : c.name) : (s.exam_note || 'slot');
+    const bg = c ? c.color : 'var(--surface-hover)';
+    return `<div class="bloc-cell${s.is_exam ? ' exam' : ''}" style="background:${esc(bg)}">${esc(label)}</div>`;
+  };
+
+  const boardSel = `<select data-blocus-board>${boards.map(b => `<option value="${esc(b.id)}" ${b.id===boardId?'selected':''}>${esc(b.name)}</option>`).join('')}</select>`;
+  const viewBtns = ['week','two','month','all'].map(v =>
+    `<button class="bloc-view ${v===view?'active':''}" data-blocus-view="${v}">${v==='two'?'2 weeks':v}</button>`
+  ).join('');
+
+  const rows = days.map(d => `
+    <tr>
+      <td class="bloc-day">${esc(fmtDay(d))}</td>
+      <td>${cell(d,'morning')}</td>
+      <td>${cell(d,'afternoon')}</td>
+    </tr>`).join('');
+
+  return `
+  <div class="blocus">
+    <div class="bloc-bar">${boardSel}<div class="bloc-views">${viewBtns}</div></div>
+    <table class="bloc-table"><thead><tr><th></th><th>AM</th><th>PM</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+  </div>`;
 }
 
 async function renderWidget(env, username, w) {
