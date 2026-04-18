@@ -492,7 +492,7 @@ export default {
     if (path === '/api/vault' && req.method === 'GET') {
       const p = url.searchParams.get('path') || '';
       return new Response(await renderVault(env, user.username, JSON.stringify({ path: p })), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }
       });
     }
 
@@ -529,7 +529,7 @@ export default {
     if (path === '/api/todo/board' && req.method === 'GET') {
       const bid = url.searchParams.get('boardId');
       return new Response(await renderTodo(env, user.username, JSON.stringify({ board_id: bid })), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }
       });
     }
 
@@ -581,7 +581,7 @@ export default {
         courses: coursesLayout.open ? await renderCourses(env, user.username) : '',
       };
       return new Response(renderPage(user, layout, widgetBodies), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }
       });
     }
 
