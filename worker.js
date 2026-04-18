@@ -48,13 +48,9 @@ button:hover{background:var(--surface-hover)}
 .ddl.out:hover{background:rgba(244,63,94,.12)!important;color:#F43F5E}
 .page{padding:16px}
 .topbar{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
-.topbar h1{font-size:16px;font-weight:600;color:var(--text-secondary)}
 .layout-slots{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .slot-btn{font-size:11px;padding:4px 8px}
 .slot-btn.save{color:var(--text-secondary)}
-.closed-chips{display:flex;gap:6px}
-.chip{background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer}
-.chip:hover{background:var(--surface-hover)}
 .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:0;grid-auto-rows:80px;position:relative}
 .widget{background:var(--surface);border:1px solid var(--border);border-radius:0;display:flex;flex-direction:column;overflow:hidden;position:relative;min-height:0}
 .widget.dragging{opacity:.55;z-index:12}
@@ -1087,7 +1083,6 @@ function renderHeader(user) {
 
 function renderPage(user, layout, bodies, slots = {}) {
   const open = layout.filter(w => w.open);
-  const closed = layout.filter(w => !w.open);
 
   // Count occurrences per type to suffix duplicates
   const counters = {};
@@ -1096,10 +1091,6 @@ function renderPage(user, layout, bodies, slots = {}) {
     counters[t] = (counters[t] || 0) + 1;
     return counters[t] > 1 ? `${WIDGET_TITLES[t] || t} #${counters[t]}` : (WIDGET_TITLES[t] || t);
   };
-
-  const chips = closed.map(w =>
-    `<button class="chip" data-reopen="${esc(w.instance_id)}">+ ${esc(WIDGET_TITLES[w.widget_type] || w.widget_type)}</button>`
-  ).join('');
 
   const addMenu = ['vault','todolist','habits','courses','blocus'].map(t =>
     `<button data-add-type="${t}">${esc(WIDGET_TITLES[t] || t)}</button>`
@@ -1129,7 +1120,6 @@ function renderPage(user, layout, bodies, slots = {}) {
 ${renderHeader(user)}
 <div class="page">
   <div class="topbar">
-    <h1>Dashboard · ${esc(user.username)}</h1>
     <div class="layout-slots">
       <button class="slot-btn" data-slot-load="1">Slot 1 ${slots[1] ? '•' : ''}</button>
       <button class="slot-btn save" data-slot-save="1">Save</button>
@@ -1142,7 +1132,6 @@ ${renderHeader(user)}
       <button data-add-toggle>+ Add widget</button>
       <div class="add-widget-menu" id="addMenu">${addMenu}</div>
     </div>
-    <div class="closed-chips">${chips}</div>
   </div>
   <div class="grid" id="grid">${widgets}</div>
 </div>
