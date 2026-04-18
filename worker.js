@@ -43,6 +43,10 @@ button:hover{background:var(--surface-hover)}
   linear-gradient(135deg,transparent 0 50%,var(--text-muted) 50% 60%,transparent 60% 70%,var(--text-muted) 70% 80%,transparent 80%)}
 .muted{color:var(--text-muted)}
 input[type=text]{background:var(--surface-soft);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font:inherit;width:100%}
+.vault .crumbs{margin-bottom:8px;font-size:12px;color:var(--text-secondary)}
+.vault .row{display:block;padding:6px 8px;border-radius:6px;cursor:pointer;color:var(--text)}
+.vault .row:hover{background:var(--surface-hover)}
+.vault .row.file{color:var(--accent)}
 `;
 
 const CLIENT_JS = `
@@ -115,7 +119,61 @@ document.addEventListener('mouseup', () => {
   save(resizing.id, r);
   resizing = null;
 });
+
+document.addEventListener('click', async e => {
+  const n = e.target.closest('[data-navvault]');
+  if (!n) return;
+  e.preventDefault();
+  const newPath = n.dataset.navvault;
+  const wEl = document.querySelector('[data-widget=vault]');
+  const s = wEl.style;
+  const col = s.gridColumn.match(/(\\d+) ?\\/ ?span ?(\\d+)/);
+  const row = s.gridRow.match(/(\\d+) ?\\/ ?span ?(\\d+)/);
+  await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ widget_id:'vault', col_start:+col[1], col_span:+col[2], row_start:+row[1], row_span:+row[2], open:1, config: JSON.stringify({ path:newPath }) })
+  });
+  const r = await fetch('/dashboard/api/vault?path=' + encodeURIComponent(newPath));
+  document.querySelector('[data-body=vault]').innerHTML = await r.text();
+});
 `;
+
+async function renderVault(env, username, configJson) {
+  let path = '';
+  try { path = JSON.parse(configJson || '{}').path || ''; } catch {}
+  const prefix = path ? (path.endsWith('/') ? path : path + '/') : '';
+  const list = await env.VAULT_R2.list({ prefix, delimiter: '/', limit: 200 });
+
+  const folders = (list.delimitedPrefixes || []).map(p => {
+    const name = p.slice(prefix.length).replace(/\/$/, '');
+    return { name, key: p };
+  });
+  const files = (list.objects || []).map(o => ({
+    name: o.key.slice(prefix.length),
+    key: o.key,
+    size: o.size,
+  })).filter(f => f.name);
+
+  const crumbs = [];
+  crumbs.push(`<a href="#" data-navvault="">root</a>`);
+  let acc = '';
+  for (const part of path.split('/').filter(Boolean)) {
+    acc += part + '/';
+    crumbs.push(` / <a href="#" data-navvault="${esc(acc)}">${esc(part)}</a>`);
+  }
+
+  const folderRows = folders.map(f =>
+    `<div class="row folder" data-navvault="${esc(f.key)}">📁 ${esc(f.name)}</div>`
+  ).join('');
+  const fileRows = files.map(f =>
+    `<a class="row file" target="_top" href="/vault/file/${encodeURIComponent(f.key)}">📄 ${esc(f.name)}</a>`
+  ).join('');
+
+  return `
+  <div class="vault">
+    <div class="crumbs">${crumbs.join('')}</div>
+    <div class="rows">${folderRows}${fileRows || (folders.length?'':'<div class="muted">empty</div>')}</div>
+  </div>`;
+}
 
 function renderPage(user, layout, widgetBodies) {
   const open = layout.filter(w => w.open);
@@ -187,6 +245,13 @@ export default {
       });
     }
 
+    if (path === '/api/vault' && req.method === 'GET') {
+      const p = url.searchParams.get('path') || '';
+      return new Response(await renderVault(env, user.username, JSON.stringify({ path: p })), {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      });
+    }
+
     if (path === '/api/layout' && req.method === 'POST') {
       const body = await req.json();
       const { widget_id, col_start, col_span, row_start, row_span, open, config } = body;
@@ -207,8 +272,9 @@ export default {
 
     if (path === '/' || path === '') {
       const layout = await loadLayout(env, user.username);
+      const vaultLayout = layout.find(w => w.widget_id === 'vault');
       const widgetBodies = {
-        vault: '<div class="muted">vault widget pending…</div>',
+        vault: vaultLayout.open ? await renderVault(env, user.username, vaultLayout.config) : '',
         todolist: '<div class="muted">todolist widget pending…</div>',
         habits: '<div class="muted">habits widget pending…</div>',
         courses: '<div class="muted">courses widget pending…</div>',
