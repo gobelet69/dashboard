@@ -299,6 +299,50 @@ function edgeSide(targetEl, e){
   if (min === top) return 'top';
   return 'bottom';
 }
+function gridContainsPoint(e){
+  const gr = grid.getBoundingClientRect();
+  return e.clientX >= gr.left && e.clientX <= gr.right && e.clientY >= gr.top && e.clientY <= gr.bottom;
+}
+function pointRectDistance(pos, r){
+  const left = r.col_start;
+  const right = r.col_start + r.col_span - 1;
+  const top = r.row_start;
+  const bottom = r.row_start + r.row_span - 1;
+  const dx = pos.col < left ? (left - pos.col) : (pos.col > right ? (pos.col - right) : 0);
+  const dy = pos.row < top ? (top - pos.row) : (pos.row > bottom ? (pos.row - bottom) : 0);
+  return dx + dy;
+}
+function sideCandidatesForPoint(pos, r){
+  const cx = r.col_start + (r.col_span / 2);
+  const cy = r.row_start + (r.row_span / 2);
+  const dx = pos.col - cx;
+  const dy = pos.row - cy;
+  const primary = Math.abs(dx) >= Math.abs(dy)
+    ? (dx < 0 ? 'left' : 'right')
+    : (dy < 0 ? 'top' : 'bottom');
+  if (primary === 'left') return ['left', 'top', 'bottom', 'right'];
+  if (primary === 'right') return ['right', 'top', 'bottom', 'left'];
+  if (primary === 'top') return ['top', 'left', 'right', 'bottom'];
+  return ['bottom', 'left', 'right', 'top'];
+}
+function proposalFromEmptyArea(items, pos, movingRect, movingId){
+  let best = null;
+  let dist = Infinity;
+  for (const it of items){
+    if (it.id === movingId) continue;
+    const d = pointRectDistance(pos, it.r);
+    if (d < dist){
+      best = it;
+      dist = d;
+    }
+  }
+  if (!best) return null;
+  for (const side of sideCandidatesForPoint(pos, best.r)){
+    const p = splitProposal(movingRect, best.r, side);
+    if (p) return { targetId: best.id, dragRect: p.dragRect, targetRect: p.targetRect };
+  }
+  return null;
+}
 
 // DRAG + SPLIT DROP
 let drag = null;
@@ -317,27 +361,38 @@ document.addEventListener('mousedown', e => {
 document.addEventListener('mousemove', e => {
   if (!drag) return;
   drag.proposal = null;
+  const items = allWidgets();
   const stack = document.elementsFromPoint(e.clientX, e.clientY);
   const targetEl = stack
     .map(node => node.closest ? node.closest('.widget') : null)
     .find(w => w && w.dataset.instance !== drag.id) || null;
-  if (!targetEl || targetEl.dataset.instance === drag.id){
+  if (targetEl && targetEl.dataset.instance !== drag.id){
+    const target = items.find(i => i.id === targetEl.dataset.instance);
+    if (!target){
+      hidePreviews();
+      return;
+    }
+    const side = edgeSide(targetEl, e);
+    const proposal = splitProposal(drag.start, target.r, side);
+    if (!proposal){
+      hidePreviews();
+      return;
+    }
+    drag.proposal = { targetId: target.id, dragRect: proposal.dragRect, targetRect: proposal.targetRect };
+    showSplitPreview(drag.proposal);
+    return;
+  }
+  if (!gridContainsPoint(e)){
     hidePreviews();
     return;
   }
-  const items = allWidgets();
-  const target = items.find(i => i.id === targetEl.dataset.instance);
-  if (!target){
+  const pos = colRowFromEvent(e);
+  const fallback = proposalFromEmptyArea(items, pos, drag.start, drag.id);
+  if (!fallback){
     hidePreviews();
     return;
   }
-  const side = edgeSide(targetEl, e);
-  const proposal = splitProposal(drag.start, target.r, side);
-  if (!proposal){
-    hidePreviews();
-    return;
-  }
-  drag.proposal = { targetId: target.id, dragRect: proposal.dragRect, targetRect: proposal.targetRect };
+  drag.proposal = fallback;
   showSplitPreview(drag.proposal);
 });
 document.addEventListener('mouseup', async () => {
