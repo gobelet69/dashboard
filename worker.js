@@ -167,6 +167,35 @@ function clamp(v, min, max){
 
 function compactLayout(items){
   const sorted = [...items].sort((a,b) => (a.r.row_start - b.r.row_start) || (a.r.col_start - b.r.col_start));
+  const bands = new Map();
+  for (const cur of sorted){
+    const key = cur.r.row_start + ':' + cur.r.row_span;
+    if (!bands.has(key)) bands.set(key, []);
+    bands.get(key).push(cur);
+  }
+  // Fill horizontal blanks by expanding adjacent east/west widgets in each row band.
+  for (const line of bands.values()){
+    line.sort((a,b) => a.r.col_start - b.r.col_start);
+    if (!line.length) continue;
+    if (line[0].r.col_start > 1){
+      const gap = line[0].r.col_start - 1;
+      line[0].r.col_start = 1;
+      line[0].r.col_span += gap;
+    }
+    for (let i = 1; i < line.length; i++){
+      const prev = line[i - 1].r;
+      const cur = line[i].r;
+      const prevEnd = prev.col_start + prev.col_span;
+      if (cur.col_start > prevEnd){
+        prev.col_span += (cur.col_start - prevEnd);
+      }
+    }
+    const last = line[line.length - 1].r;
+    const lastEnd = last.col_start + last.col_span;
+    if (lastEnd < COLS + 1){
+      last.col_span += (COLS + 1 - lastEnd);
+    }
+  }
   for (const cur of sorted){
     const maxColStart = COLS - cur.r.col_span + 1;
     cur.r.col_start = Math.max(1, Math.min(maxColStart, cur.r.col_start));
