@@ -52,15 +52,31 @@ button:hover{background:var(--surface-hover)}
 .closed-chips{display:flex;gap:6px}
 .chip{background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer}
 .chip:hover{background:var(--surface-hover)}
-.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;grid-auto-rows:80px}
-.widget{background:var(--surface);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;position:relative;min-height:0}
-.widget-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-soft);font-size:13px;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:0;grid-auto-rows:80px;position:relative}
+.widget{background:var(--surface);border:1px solid var(--border);border-radius:0;display:flex;flex-direction:column;overflow:hidden;position:relative;min-height:0}
+.widget.dragging{opacity:0.6;z-index:10}
+.widget-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-soft);font-size:13px;font-weight:600;cursor:grab}
+.widget-header.dragging{cursor:grabbing}
 .widget-header .title{display:flex;gap:8px;align-items:center}
-.widget-header .close{background:transparent;border:none;color:var(--text-muted);font-size:16px;line-height:1;padding:2px 6px}
+.widget-header .close{background:transparent;border:none;color:var(--text-muted);font-size:16px;line-height:1;padding:2px 6px;cursor:pointer}
 .widget-header .close:hover{color:var(--text)}
 .widget-body{flex:1;overflow:auto;padding:12px;font-size:13px}
-.resize-handle{position:absolute;right:2px;bottom:2px;width:14px;height:14px;cursor:se-resize;opacity:.5;background:
-  linear-gradient(135deg,transparent 0 50%,var(--text-muted) 50% 60%,transparent 60% 70%,var(--text-muted) 70% 80%,transparent 80%)}
+.resize-handle{position:absolute;z-index:5}
+.resize-handle.n{top:-3px;left:6px;right:6px;height:6px;cursor:n-resize}
+.resize-handle.s{bottom:-3px;left:6px;right:6px;height:6px;cursor:s-resize}
+.resize-handle.e{right:-3px;top:6px;bottom:6px;width:6px;cursor:e-resize}
+.resize-handle.w{left:-3px;top:6px;bottom:6px;width:6px;cursor:w-resize}
+.resize-handle.nw{top:-3px;left:-3px;width:10px;height:10px;cursor:nw-resize}
+.resize-handle.ne{top:-3px;right:-3px;width:10px;height:10px;cursor:ne-resize}
+.resize-handle.sw{bottom:-3px;left:-3px;width:10px;height:10px;cursor:sw-resize}
+.resize-handle.se{bottom:-3px;right:-3px;width:10px;height:10px;cursor:se-resize}
+/* Add-widget dropdown */
+.add-widget{position:relative}
+.add-widget > button{font-size:12px}
+.add-widget-menu{position:absolute;top:100%;left:0;margin-top:4px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;display:none;z-index:100;min-width:160px}
+.add-widget-menu.show{display:block}
+.add-widget-menu button{display:block;width:100%;text-align:left;border:none;background:transparent;padding:6px 10px;border-radius:6px}
+.add-widget-menu button:hover{background:var(--surface-hover)}
 .muted{color:var(--text-muted)}
 input[type=text]{background:var(--surface-soft);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font:inherit;width:100%}
 .vault .crumbs{margin-bottom:8px;font-size:12px;color:var(--text-secondary)}
@@ -109,11 +125,9 @@ input[type=text]{background:var(--surface-soft);border:1px solid var(--border);c
 
 const CLIENT_JS = `
 const grid = document.getElementById('grid');
+const COLS = 12;
 
-// rectOf is the canonical name used by Task-2+ handlers; alias widgetRect for Task 3 compatibility
-function rectOf(el){ return widgetRect(el); }
-
-function widgetRect(el){
+function rectOf(el){
   const s = el.style;
   const col = s.gridColumn.match(/(\\d+) ?\\/ ?span ?(\\d+)/);
   const row = s.gridRow.match(/(\\d+) ?\\/ ?span ?(\\d+)/);
@@ -123,68 +137,186 @@ function setRect(el, r){
   el.style.gridColumn = r.col_start + ' / span ' + r.col_span;
   el.style.gridRow = r.row_start + ' / span ' + r.row_span;
 }
-
-let saveTimer;
-function save(instanceId, patch){
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    const el = document.querySelector('[data-instance="'+instanceId+'"]');
-    const r = el ? widgetRect(el) : { col_start:1, col_span:6, row_start:1, row_span:2 };
-    const body = Object.assign({ instance_id: instanceId, open:1, config:'{}' }, r, patch);
-    await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  }, 300);
+function overlaps(a, b){
+  return !(a.col_start + a.col_span <= b.col_start || b.col_start + b.col_span <= a.col_start ||
+           a.row_start + a.row_span <= b.row_start || b.row_start + b.row_span <= a.row_start);
+}
+function allWidgets(){
+  return [...document.querySelectorAll('.widget')].map(el => ({ el, id: el.dataset.instance, r: rectOf(el) }));
 }
 
-document.addEventListener('click', e => {
-  const c = e.target.closest('[data-close]');
-  if (c) {
-    e.preventDefault();
-    const instanceId = c.dataset.close;
-    const widget = c.closest('[data-instance]');
-    const r = widget ? widgetRect(widget) : { col_start:1, col_span:6, row_start:1, row_span:2 };
-    fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ instance_id: instanceId, ...r, open: 0 })
-    }).then(() => location.reload());
-    return;
+// Push any widget overlapping \`moving\` downward, recursively.
+function reflow(movingId){
+  const items = allWidgets();
+  const moving = items.find(i => i.id === movingId);
+  if (!moving) return items;
+  let changed = true;
+  while (changed){
+    changed = false;
+    for (const o of items){
+      if (o.id === movingId) continue;
+      const target = moving.r;
+      if (overlaps(target, o.r)){
+        o.r.row_start = target.row_start + target.row_span;
+        setRect(o.el, o.r);
+        changed = true;
+      }
+    }
+    // propagate pushes among pushed widgets
+    for (let i = 0; i < items.length; i++){
+      for (let j = 0; j < items.length; j++){
+        if (i === j) continue;
+        const a = items[i], b = items[j];
+        if (a.id === movingId) continue;
+        if (overlaps(a.r, b.r)){
+          const ay = a.r.row_start + a.r.row_span;
+          const by = b.r.row_start + b.r.row_span;
+          // push whichever is lower
+          if (ay > by) { b.r.row_start = ay; setRect(b.el, b.r); }
+          else { a.r.row_start = by; setRect(a.el, a.r); }
+          changed = true;
+        }
+      }
+    }
   }
-  const r = e.target.closest('[data-reopen]');
-  if (r) {
-    const instanceId = r.dataset.reopen;
-    const widgets = [...document.querySelectorAll('.widget')];
-    let maxRow = 1;
-    for (const w of widgets){ const rr = widgetRect(w); maxRow = Math.max(maxRow, rr.row_start + rr.row_span); }
-    fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ instance_id: instanceId, col_start:1, col_span:6, row_start:maxRow, row_span:3, open:1 })
-    }).then(() => location.reload());
+  return items;
+}
+
+// Persist everyone's rect in one POST
+async function saveAll(items){
+  const payload = items.map(i => ({ instance_id: i.id, ...i.r, open: 1 }));
+  await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+}
+
+function colRowFromEvent(e){
+  const gr = grid.getBoundingClientRect();
+  const colW = gr.width / COLS;
+  const rowH = 80;
+  const c = Math.max(1, Math.min(COLS, Math.floor((e.clientX - gr.left) / colW) + 1));
+  const r = Math.max(1, Math.floor((e.clientY - gr.top) / rowH) + 1);
+  return { col: c, row: r };
+}
+
+// DRAG
+let drag = null;
+document.addEventListener('mousedown', e => {
+  if (e.target.closest('[data-close]')) return;
+  if (e.target.closest('[data-resize]')) return;
+  const h = e.target.closest('[data-drag]');
+  if (!h) return;
+  const el = h.closest('.widget');
+  const start = rectOf(el);
+  const pos = colRowFromEvent(e);
+  drag = { el, id: h.dataset.drag, start, offsetCol: pos.col - start.col_start, offsetRow: pos.row - start.row_start };
+  el.classList.add('dragging');
+  h.classList.add('dragging');
+  e.preventDefault();
+});
+document.addEventListener('mousemove', e => {
+  if (!drag) return;
+  const pos = colRowFromEvent(e);
+  const newCol = Math.max(1, Math.min(COLS - drag.start.col_span + 1, pos.col - drag.offsetCol));
+  const newRow = Math.max(1, pos.row - drag.offsetRow);
+  const cur = rectOf(drag.el);
+  if (cur.col_start !== newCol || cur.row_start !== newRow){
+    setRect(drag.el, { ...drag.start, col_start: newCol, row_start: newRow });
+    reflow(drag.id);
   }
 });
+document.addEventListener('mouseup', async () => {
+  if (!drag) return;
+  drag.el.classList.remove('dragging');
+  const hdr = drag.el.querySelector('[data-drag]'); if (hdr) hdr.classList.remove('dragging');
+  const items = reflow(drag.id);
+  await saveAll(items);
+  drag = null;
+});
 
-let resizing = null;
+// RESIZE (8-direction)
+let resize = null;
 document.addEventListener('mousedown', e => {
   const h = e.target.closest('[data-resize]');
   if (!h) return;
   e.preventDefault();
   const el = h.closest('.widget');
-  const rect = el.getBoundingClientRect();
-  const gridRect = grid.getBoundingClientRect();
-  const colW = (gridRect.width - (11 * 12)) / 12;
-  const rowH = 80 + 12;
-  resizing = { el, id: h.dataset.resize, startX: e.clientX, startY: e.clientY, startW: rect.width, startH: rect.height, colW, rowH, start: widgetRect(el) };
+  resize = { el, id: h.dataset.resize, dir: h.dataset.dir, start: rectOf(el) };
 });
 document.addEventListener('mousemove', e => {
-  if (!resizing) return;
-  const dx = e.clientX - resizing.startX;
-  const dy = e.clientY - resizing.startY;
-  const colSpan = Math.max(3, Math.min(12 - resizing.start.col_start + 1, Math.round((resizing.startW + dx) / resizing.colW)));
-  const rowSpan = Math.max(2, Math.round((resizing.startH + dy) / resizing.rowH));
-  setRect(resizing.el, { ...resizing.start, col_span: colSpan, row_span: rowSpan });
+  if (!resize) return;
+  const pos = colRowFromEvent(e);
+  let { col_start, col_span, row_start, row_span } = resize.start;
+  const dir = resize.dir;
+  if (dir.includes('e')){
+    col_span = Math.max(3, Math.min(COLS - col_start + 1, pos.col - col_start + 1));
+  }
+  if (dir.includes('w')){
+    const right = col_start + col_span;
+    col_start = Math.min(right - 3, Math.max(1, pos.col));
+    col_span = right - col_start;
+  }
+  if (dir.includes('s')){
+    row_span = Math.max(2, pos.row - row_start + 1);
+  }
+  if (dir.includes('n')){
+    const bottom = row_start + row_span;
+    row_start = Math.min(bottom - 2, Math.max(1, pos.row));
+    row_span = bottom - row_start;
+  }
+  setRect(resize.el, { col_start, col_span, row_start, row_span });
+  reflow(resize.id);
 });
-document.addEventListener('mouseup', () => {
-  if (!resizing) return;
-  const r = widgetRect(resizing.el);
-  save(resizing.id, r);
-  resizing = null;
+document.addEventListener('mouseup', async () => {
+  if (!resize) return;
+  const items = reflow(resize.id);
+  await saveAll(items);
+  resize = null;
 });
+
+// CLOSE / REOPEN
+document.addEventListener('click', async e => {
+  const c = e.target.closest('[data-close]');
+  if (c){
+    e.preventDefault();
+    const widget = c.closest('[data-instance]');
+    const id = c.dataset.close;
+    await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ instance_id: id, ...rectOf(widget), open: 0 })
+    });
+    location.reload();
+    return;
+  }
+  const r = e.target.closest('[data-reopen]');
+  if (r){
+    const items = allWidgets();
+    let maxRow = 1;
+    for (const w of items){ maxRow = Math.max(maxRow, w.r.row_start + w.r.row_span); }
+    await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ instance_id: r.dataset.reopen, col_start: 1, col_span: 6, row_start: maxRow, row_span: 3, open: 1 })
+    });
+    location.reload();
+  }
+});
+
+// ADD WIDGET MENU
+document.addEventListener('click', e => {
+  if (e.target.closest('[data-add-toggle]')){
+    document.getElementById('addMenu').classList.toggle('show');
+    return;
+  }
+  if (!e.target.closest('.add-widget')){
+    const m = document.getElementById('addMenu'); if (m) m.classList.remove('show');
+  }
+});
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-add-type]');
+  if (!b) return;
+  await fetch('/dashboard/api/widget/create', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ widget_type: b.dataset.addType })
+  });
+  location.reload();
+});
+
+// --- Widget-specific handlers (adapted to data-instance) ---
 
 document.addEventListener('click', async e => {
   const n = e.target.closest('[data-navvault]');
@@ -192,25 +324,22 @@ document.addEventListener('click', async e => {
   e.preventDefault();
   const widget = n.closest('[data-instance]');
   const newPath = n.dataset.navvault;
-  const r = widgetRect(widget);
   await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ instance_id: widget.dataset.instance, ...r, open:1, config: JSON.stringify({ path:newPath }) })
+    body: JSON.stringify({ instance_id: widget.dataset.instance, ...rectOf(widget), open:1, config: JSON.stringify({ path:newPath }) })
   });
-  const res = await fetch('/dashboard/api/vault?path=' + encodeURIComponent(newPath));
-  widget.querySelector('[data-body]').innerHTML = await res.text();
+  const r = await fetch('/dashboard/api/vault?path=' + encodeURIComponent(newPath));
+  widget.querySelector('[data-body]').innerHTML = await r.text();
 });
 
 document.addEventListener('change', async e => {
   const s = e.target.closest('[data-todo-board]');
   if (!s) return;
-  const bid = s.value;
   const widget = s.closest('[data-instance]');
-  const r = widgetRect(widget);
   await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ instance_id: widget.dataset.instance, ...r, open:1, config: JSON.stringify({ board_id:bid }) })
+    body: JSON.stringify({ instance_id: widget.dataset.instance, ...rectOf(widget), open:1, config: JSON.stringify({ board_id: s.value }) })
   });
-  const res = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
-  widget.querySelector('[data-body]').innerHTML = await res.text();
+  const r = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(s.value));
+  widget.querySelector('[data-body]').innerHTML = await r.text();
 });
 
 document.addEventListener('submit', async e => {
@@ -221,10 +350,10 @@ document.addEventListener('submit', async e => {
   const fd = new FormData(f);
   fd.set('listId', f.dataset.addcard);
   await fetch('/dashboard/api/todo/card/create', { method:'POST', body: fd });
-  const sel = widget ? widget.querySelector('[data-todo-board]') : document.querySelector('[data-todo-board]');
+  const sel = widget.querySelector('[data-todo-board]');
   const bid = sel ? sel.value : '';
-  const res = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
-  if (widget) widget.querySelector('[data-body]').innerHTML = await res.text();
+  const r = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
+  widget.querySelector('[data-body]').innerHTML = await r.text();
 });
 
 document.addEventListener('click', async e => {
@@ -270,10 +399,10 @@ document.addEventListener('drop', async e => {
   const fd = new FormData();
   fd.set('cardId', cardId); fd.set('newListId', newListId); fd.set('newPosition', npos);
   await fetch('/dashboard/api/todo/card/move', { method:'POST', body: fd });
-  const sel = widget ? widget.querySelector('[data-todo-board]') : document.querySelector('[data-todo-board]');
+  const sel = widget.querySelector('[data-todo-board]');
   const bid = sel ? sel.value : '';
-  const res = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
-  if (widget) widget.querySelector('[data-body]').innerHTML = await res.text();
+  const r = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
+  widget.querySelector('[data-body]').innerHTML = await r.text();
   draggingCard = null;
 });
 
@@ -290,12 +419,10 @@ document.addEventListener('click', async e => {
   const b = e.target.closest('[data-blocus-view]');
   if (!b) return;
   const widget = b.closest('[data-instance]');
-  const instanceId = widget.dataset.instance;
   const sel = widget.querySelector('[data-blocus-board]');
   const currentBoard = sel ? sel.value : null;
-  const newView = b.dataset.blocusView;
   await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ instance_id: instanceId, ...rectOf(widget), open:1, config: JSON.stringify({ board_id: currentBoard, view: newView }) })
+    body: JSON.stringify({ instance_id: widget.dataset.instance, ...rectOf(widget), open:1, config: JSON.stringify({ board_id: currentBoard, view: b.dataset.blocusView }) })
   });
   location.reload();
 });
@@ -635,16 +762,22 @@ function renderPage(user, layout, bodies) {
     `<button class="chip" data-reopen="${esc(w.instance_id)}">+ ${esc(WIDGET_TITLES[w.widget_type] || w.widget_type)}</button>`
   ).join('');
 
+  const addMenu = ['vault','todolist','habits','courses','blocus'].map(t =>
+    `<button data-add-type="${t}">${esc(WIDGET_TITLES[t] || t)}</button>`
+  ).join('');
+
   const widgets = open.map(w => {
     const label = labelFor(w);
+    const handles = ['n','s','e','w','nw','ne','sw','se']
+      .map(d => `<div class="resize-handle ${d}" data-resize="${esc(w.instance_id)}" data-dir="${d}"></div>`).join('');
     return `
     <section class="widget" data-instance="${esc(w.instance_id)}" data-type="${esc(w.widget_type)}" style="${widgetStyle(w)}">
-      <div class="widget-header">
+      <div class="widget-header" data-drag="${esc(w.instance_id)}">
         <div class="title">${label}</div>
         <button class="close" data-close="${esc(w.instance_id)}" title="Close">×</button>
       </div>
       <div class="widget-body" data-body="${esc(w.instance_id)}">${bodies[w.instance_id] || ''}</div>
-      <div class="resize-handle" data-resize="${esc(w.instance_id)}"></div>
+      ${handles}
     </section>`;
   }).join('');
 
@@ -658,6 +791,10 @@ ${renderHeader(user)}
 <div class="page">
   <div class="topbar">
     <h1>Dashboard · ${esc(user.username)}</h1>
+    <div class="add-widget">
+      <button data-add-toggle>+ Add widget</button>
+      <div class="add-widget-menu" id="addMenu">${addMenu}</div>
+    </div>
     <div class="closed-chips">${chips}</div>
   </div>
   <div class="grid" id="grid">${widgets}</div>
