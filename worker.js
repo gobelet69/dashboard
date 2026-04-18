@@ -159,6 +159,9 @@ function allWidgets(){
 function overlapSize(aStart, aEnd, bStart, bEnd){
   return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
 }
+function clamp(v, min, max){
+  return Math.max(min, Math.min(max, v));
+}
 
 function compactLayout(items){
   const sorted = [...items].sort((a,b) => (a.r.row_start - b.r.row_start) || (a.r.col_start - b.r.col_start));
@@ -214,6 +217,21 @@ function pickNeighbor(items, self, side){
     }
   }
   return best;
+}
+function touchingNeighbors(items, self, side){
+  const mine = self.r;
+  return items.filter(item => {
+    if (item.id === self.id) return false;
+    const r = item.r;
+    if (side === 'n') return (r.row_start + r.row_span === mine.row_start) &&
+      overlapSize(mine.col_start, mine.col_start + mine.col_span, r.col_start, r.col_start + r.col_span) > 0;
+    if (side === 's') return (mine.row_start + mine.row_span === r.row_start) &&
+      overlapSize(mine.col_start, mine.col_start + mine.col_span, r.col_start, r.col_start + r.col_span) > 0;
+    if (side === 'w') return (r.col_start + r.col_span === mine.col_start) &&
+      overlapSize(mine.row_start, mine.row_start + mine.row_span, r.row_start, r.row_start + r.row_span) > 0;
+    return (mine.col_start + mine.col_span === r.col_start) &&
+      overlapSize(mine.row_start, mine.row_start + mine.row_span, r.row_start, r.row_start + r.row_span) > 0;
+  });
 }
 
 // Persist everyone's rect in one POST
@@ -428,17 +446,18 @@ document.addEventListener('mousedown', e => {
   const items = allWidgets();
   const self = items.find(i => i.id === h.dataset.resize);
   if (!self) return;
-  const n = pickNeighbor(items, self, 'n');
-  const s = pickNeighbor(items, self, 's');
-  const eSide = pickNeighbor(items, self, 'e');
-  const w = pickNeighbor(items, self, 'w');
   resize = {
     el,
     id: h.dataset.resize,
     dir: h.dataset.dir,
     start: rectOf(el),
     startItems: Object.fromEntries(items.map(i => [i.id, { ...i.r }])),
-    neighbors: { n: n?.id || null, s: s?.id || null, e: eSide?.id || null, w: w?.id || null }
+    neighbors: {
+      n: touchingNeighbors(items, self, 'n').map(i => i.id),
+      s: touchingNeighbors(items, self, 's').map(i => i.id),
+      e: touchingNeighbors(items, self, 'e').map(i => i.id),
+      w: touchingNeighbors(items, self, 'w').map(i => i.id)
+    }
   };
 });
 document.addEventListener('mousemove', e => {
@@ -447,55 +466,107 @@ document.addEventListener('mousemove', e => {
   const map = Object.fromEntries(items.map(i => [i.id, i]));
   const self = map[resize.id];
   if (!self) return;
-  const restore = (id) => {
-    if (!id || !map[id]) return;
+  const idsToRestore = new Set([
+    resize.id,
+    ...resize.neighbors.e,
+    ...resize.neighbors.w,
+    ...resize.neighbors.n,
+    ...resize.neighbors.s
+  ]);
+  for (const id of idsToRestore){
+    if (!map[id]) continue;
     map[id].r = { ...resize.startItems[id] };
     setRect(map[id].el, map[id].r);
-  };
-  restore(resize.id);
-  restore(resize.neighbors.e);
-  restore(resize.neighbors.w);
-  restore(resize.neighbors.n);
-  restore(resize.neighbors.s);
+  }
 
   const pos = colRowFromEvent(e);
   let { col_start, col_span, row_start, row_span } = resize.start;
   const dir = resize.dir;
-  if (dir.includes('e') && resize.neighbors.e){
-    const right = map[resize.neighbors.e].r;
-    const total = resize.start.col_span + right.col_span;
-    const nextSelfSpan = Math.max(3, Math.min(total - 3, pos.col - col_start + 1));
-    col_span = nextSelfSpan;
-    right.col_start = col_start + nextSelfSpan;
-    right.col_span = total - nextSelfSpan;
-    setRect(map[resize.neighbors.e].el, right);
+  if (dir.includes('e')){
+    if (resize.neighbors.e.length){
+      const startRight = resize.start.col_start + resize.start.col_span - 1;
+      const wanted = pos.col - startRight;
+      let minDelta = MIN_COL - resize.start.col_span;
+      let maxDelta = COLS - resize.start.col_start + 1 - resize.start.col_span;
+      for (const id of resize.neighbors.e){
+        maxDelta = Math.min(maxDelta, resize.startItems[id].col_span - MIN_COL);
+      }
+      const delta = clamp(wanted, minDelta, maxDelta);
+      col_span = resize.start.col_span + delta;
+      for (const id of resize.neighbors.e){
+        if (!map[id]) continue;
+        map[id].r.col_start = resize.startItems[id].col_start + delta;
+        map[id].r.col_span = resize.startItems[id].col_span - delta;
+        setRect(map[id].el, map[id].r);
+      }
+    } else {
+      col_span = Math.max(MIN_COL, Math.min(COLS - col_start + 1, pos.col - col_start + 1));
+    }
   }
-  if (dir.includes('w') && resize.neighbors.w){
-    const left = map[resize.neighbors.w].r;
-    const total = resize.start.col_span + left.col_span;
-    const rightEdge = resize.start.col_start + resize.start.col_span;
-    col_start = Math.max(left.col_start + 3, Math.min(rightEdge - 3, pos.col));
-    col_span = rightEdge - col_start;
-    left.col_span = total - col_span;
-    setRect(map[resize.neighbors.w].el, left);
+  if (dir.includes('w')){
+    if (resize.neighbors.w.length){
+      const wanted = pos.col - resize.start.col_start;
+      let minDelta = 1 - resize.start.col_start;
+      let maxDelta = resize.start.col_span - MIN_COL;
+      for (const id of resize.neighbors.w){
+        minDelta = Math.max(minDelta, MIN_COL - resize.startItems[id].col_span);
+      }
+      const delta = clamp(wanted, minDelta, maxDelta);
+      col_start = resize.start.col_start + delta;
+      col_span = resize.start.col_span - delta;
+      for (const id of resize.neighbors.w){
+        if (!map[id]) continue;
+        map[id].r.col_span = resize.startItems[id].col_span + delta;
+        setRect(map[id].el, map[id].r);
+      }
+    } else {
+      const right = col_start + col_span;
+      col_start = Math.min(right - MIN_COL, Math.max(1, pos.col));
+      col_span = right - col_start;
+    }
   }
-  if (dir.includes('s') && resize.neighbors.s){
-    const below = map[resize.neighbors.s].r;
-    const total = resize.start.row_span + below.row_span;
-    const nextSelfSpan = Math.max(2, Math.min(total - 2, pos.row - row_start + 1));
-    row_span = nextSelfSpan;
-    below.row_start = row_start + nextSelfSpan;
-    below.row_span = total - nextSelfSpan;
-    setRect(map[resize.neighbors.s].el, below);
+  if (dir.includes('s')){
+    if (resize.neighbors.s.length){
+      const startBottom = resize.start.row_start + resize.start.row_span - 1;
+      const wanted = pos.row - startBottom;
+      let minDelta = MIN_ROW - resize.start.row_span;
+      let maxDelta = Infinity;
+      for (const id of resize.neighbors.s){
+        maxDelta = Math.min(maxDelta, resize.startItems[id].row_span - MIN_ROW);
+      }
+      const delta = clamp(wanted, minDelta, maxDelta);
+      row_span = resize.start.row_span + delta;
+      for (const id of resize.neighbors.s){
+        if (!map[id]) continue;
+        map[id].r.row_start = resize.startItems[id].row_start + delta;
+        map[id].r.row_span = resize.startItems[id].row_span - delta;
+        setRect(map[id].el, map[id].r);
+      }
+    } else {
+      row_span = Math.max(MIN_ROW, pos.row - row_start + 1);
+    }
   }
-  if (dir.includes('n') && resize.neighbors.n){
-    const above = map[resize.neighbors.n].r;
-    const total = resize.start.row_span + above.row_span;
-    const bottom = resize.start.row_start + resize.start.row_span;
-    row_start = Math.max(above.row_start + 2, Math.min(bottom - 2, pos.row));
-    row_span = bottom - row_start;
-    above.row_span = total - row_span;
-    setRect(map[resize.neighbors.n].el, above);
+  if (dir.includes('n')){
+    if (resize.neighbors.n.length){
+      const wanted = pos.row - resize.start.row_start;
+      let minDelta = 1 - resize.start.row_start;
+      let maxDelta = resize.start.row_span - MIN_ROW;
+      for (const id of resize.neighbors.n){
+        minDelta = Math.max(minDelta, MIN_ROW - resize.startItems[id].row_span);
+      }
+      const delta = clamp(wanted, minDelta, maxDelta);
+      row_start = resize.start.row_start + delta;
+      row_span = resize.start.row_span - delta;
+      for (const id of resize.neighbors.n){
+        if (!map[id]) continue;
+        map[id].r.row_span = resize.startItems[id].row_span + delta;
+        setRect(map[id].el, map[id].r);
+      }
+    } else {
+      const bottom = row_start + row_span;
+      row_start = Math.min(bottom - MIN_ROW, Math.max(1, pos.row));
+      row_span = bottom - row_start;
+    }
   }
   self.r = { col_start, col_span, row_start, row_span };
   setRect(self.el, self.r);
