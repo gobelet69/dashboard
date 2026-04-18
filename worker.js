@@ -57,11 +57,15 @@ button:hover{background:var(--surface-hover)}
 .chip:hover{background:var(--surface-hover)}
 .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:0;grid-auto-rows:80px;position:relative}
 .widget{background:var(--surface);border:1px solid var(--border);border-radius:0;display:flex;flex-direction:column;overflow:hidden;position:relative;min-height:0}
-.widget-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-soft);font-size:13px;font-weight:600}
+.widget.dragging{opacity:.55;z-index:12}
+.widget-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-soft);font-size:13px;font-weight:600;cursor:grab}
+.widget-header.dragging{cursor:grabbing}
 .widget-header .title{display:flex;gap:8px;align-items:center}
 .widget-header .close{background:transparent;border:none;color:var(--text-muted);font-size:16px;line-height:1;padding:2px 6px;cursor:pointer}
 .widget-header .close:hover{color:var(--text)}
 .widget-body{flex:1;overflow:auto;padding:12px;font-size:13px}
+.drop-preview{border:2px dashed rgba(168,85,247,.95);background:rgba(168,85,247,.18);z-index:18;pointer-events:none}
+.drop-preview.target{border-color:rgba(236,72,153,.9);background:rgba(236,72,153,.12)}
 .resize-handle{position:absolute;z-index:5}
 .resize-handle.n{top:-3px;left:6px;right:6px;height:6px;cursor:n-resize}
 .resize-handle.s{bottom:-3px;left:6px;right:6px;height:6px;cursor:s-resize}
@@ -131,6 +135,8 @@ input[type=text]{background:var(--surface-soft);border:1px solid var(--border);c
 const CLIENT_JS = `
 const grid = document.getElementById('grid');
 const COLS = 12;
+const MIN_COL = 3;
+const MIN_ROW = 2;
 
 function rectOf(el){
   const s = el.style;
@@ -224,6 +230,134 @@ function colRowFromEvent(e){
   const r = Math.max(1, Math.floor((e.clientY - gr.top) / rowH) + 1);
   return { col: c, row: r };
 }
+
+function ensurePreview(id, cls){
+  let el = document.getElementById(id);
+  if (!el){
+    el = document.createElement('div');
+    el.id = id;
+    el.className = 'drop-preview ' + cls;
+    grid.appendChild(el);
+  }
+  return el;
+}
+function hidePreviews(){
+  const a = document.getElementById('dropPreview');
+  const b = document.getElementById('targetPreview');
+  if (a) a.style.display = 'none';
+  if (b) b.style.display = 'none';
+}
+function showSplitPreview(p){
+  const drop = ensurePreview('dropPreview', 'drop');
+  const target = ensurePreview('targetPreview', 'target');
+  setRect(drop, p.dragRect);
+  setRect(target, p.targetRect);
+  drop.style.display = 'block';
+  target.style.display = 'block';
+}
+function splitProposal(movingRect, targetRect, side){
+  if (side === 'left' || side === 'right'){
+    if (targetRect.col_span < MIN_COL * 2) return null;
+    const dragSpan = Math.max(MIN_COL, Math.min(targetRect.col_span - MIN_COL, Math.round(targetRect.col_span / 2)));
+    const targetSpan = targetRect.col_span - dragSpan;
+    if (targetSpan < MIN_COL) return null;
+    if (side === 'left'){
+      return {
+        dragRect: { col_start: targetRect.col_start, col_span: dragSpan, row_start: targetRect.row_start, row_span: targetRect.row_span },
+        targetRect: { ...targetRect, col_start: targetRect.col_start + dragSpan, col_span: targetSpan }
+      };
+    }
+    return {
+      dragRect: { col_start: targetRect.col_start + targetSpan, col_span: dragSpan, row_start: targetRect.row_start, row_span: targetRect.row_span },
+      targetRect: { ...targetRect, col_span: targetSpan }
+    };
+  }
+  if (targetRect.row_span < MIN_ROW * 2) return null;
+  const dragSpan = Math.max(MIN_ROW, Math.min(targetRect.row_span - MIN_ROW, Math.round(targetRect.row_span / 2)));
+  const targetSpan = targetRect.row_span - dragSpan;
+  if (targetSpan < MIN_ROW) return null;
+  if (side === 'top'){
+    return {
+      dragRect: { col_start: targetRect.col_start, col_span: targetRect.col_span, row_start: targetRect.row_start, row_span: dragSpan },
+      targetRect: { ...targetRect, row_start: targetRect.row_start + dragSpan, row_span: targetSpan }
+    };
+  }
+  return {
+    dragRect: { col_start: targetRect.col_start, col_span: targetRect.col_span, row_start: targetRect.row_start + targetSpan, row_span: dragSpan },
+    targetRect: { ...targetRect, row_span: targetSpan }
+  };
+}
+function edgeSide(targetEl, e){
+  const r = targetEl.getBoundingClientRect();
+  const left = Math.abs(e.clientX - r.left);
+  const right = Math.abs(r.right - e.clientX);
+  const top = Math.abs(e.clientY - r.top);
+  const bottom = Math.abs(r.bottom - e.clientY);
+  const min = Math.min(left, right, top, bottom);
+  if (min === left) return 'left';
+  if (min === right) return 'right';
+  if (min === top) return 'top';
+  return 'bottom';
+}
+
+// DRAG + SPLIT DROP
+let drag = null;
+document.addEventListener('mousedown', e => {
+  if (e.target.closest('[data-close]')) return;
+  if (e.target.closest('[data-resize]')) return;
+  const h = e.target.closest('[data-drag]');
+  if (!h) return;
+  const el = h.closest('.widget');
+  drag = { id: h.dataset.drag, el, start: rectOf(el), proposal: null };
+  el.classList.add('dragging');
+  h.classList.add('dragging');
+  e.preventDefault();
+});
+document.addEventListener('mousemove', e => {
+  if (!drag) return;
+  drag.proposal = null;
+  const hovered = document.elementFromPoint(e.clientX, e.clientY);
+  const targetEl = hovered ? hovered.closest('.widget') : null;
+  if (!targetEl || targetEl.dataset.instance === drag.id){
+    hidePreviews();
+    return;
+  }
+  const items = allWidgets();
+  const target = items.find(i => i.id === targetEl.dataset.instance);
+  if (!target){
+    hidePreviews();
+    return;
+  }
+  const side = edgeSide(targetEl, e);
+  const proposal = splitProposal(drag.start, target.r, side);
+  if (!proposal){
+    hidePreviews();
+    return;
+  }
+  drag.proposal = { targetId: target.id, dragRect: proposal.dragRect, targetRect: proposal.targetRect };
+  showSplitPreview(drag.proposal);
+});
+document.addEventListener('mouseup', async () => {
+  if (!drag) return;
+  hidePreviews();
+  drag.el.classList.remove('dragging');
+  const hdr = drag.el.querySelector('[data-drag]');
+  if (hdr) hdr.classList.remove('dragging');
+  if (drag.proposal){
+    const items = allWidgets();
+    const moving = items.find(i => i.id === drag.id);
+    const target = items.find(i => i.id === drag.proposal.targetId);
+    if (moving && target){
+      moving.r = drag.proposal.dragRect;
+      target.r = drag.proposal.targetRect;
+      setRect(moving.el, moving.r);
+      setRect(target.el, target.r);
+      const compacted = compactLayout(items);
+      await saveAll(compacted);
+    }
+  }
+  drag = null;
+});
 
 // RESIZE (8-direction)
 let resize = null;
@@ -847,7 +981,7 @@ function renderPage(user, layout, bodies, slots = {}) {
       .map(d => `<div class="resize-handle ${d}" data-resize="${esc(w.instance_id)}" data-dir="${d}"></div>`).join('');
     return `
     <section class="widget" data-instance="${esc(w.instance_id)}" data-type="${esc(w.widget_type)}" style="${widgetStyle(w)}">
-      <div class="widget-header">
+      <div class="widget-header" data-drag="${esc(w.instance_id)}">
         <div class="title">${label}</div>
         <button class="close" data-close="${esc(w.instance_id)}" title="Close">×</button>
       </div>
