@@ -49,14 +49,15 @@ button:hover{background:var(--surface-hover)}
 .page{padding:16px}
 .topbar{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
 .topbar h1{font-size:16px;font-weight:600;color:var(--text-secondary)}
+.layout-slots{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.slot-btn{font-size:11px;padding:4px 8px}
+.slot-btn.save{color:var(--text-secondary)}
 .closed-chips{display:flex;gap:6px}
 .chip{background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer}
 .chip:hover{background:var(--surface-hover)}
 .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:0;grid-auto-rows:80px;position:relative}
 .widget{background:var(--surface);border:1px solid var(--border);border-radius:0;display:flex;flex-direction:column;overflow:hidden;position:relative;min-height:0}
-.widget.dragging{opacity:0.6;z-index:10}
-.widget-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-soft);font-size:13px;font-weight:600;cursor:grab}
-.widget-header.dragging{cursor:grabbing}
+.widget-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-soft);font-size:13px;font-weight:600}
 .widget-header .title{display:flex;gap:8px;align-items:center}
 .widget-header .close{background:transparent;border:none;color:var(--text-muted);font-size:16px;line-height:1;padding:2px 6px;cursor:pointer}
 .widget-header .close:hover{color:var(--text)}
@@ -109,18 +110,22 @@ input[type=text]{background:var(--surface-soft);border:1px solid var(--border);c
 .course-tile{display:flex;align-items:center;gap:6px;background:var(--surface-soft);border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--text);font-size:12px}
 .course-tile:hover{background:var(--surface-hover);color:var(--text)}
 .course-tile .emoji{font-size:14px}
-.blocus .bloc-bar{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.blocus .bloc-bar{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
 .blocus select{background:var(--surface-soft);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:6px;font:inherit}
 .blocus .bloc-views{display:flex;gap:4px}
 .bloc-view{font-size:11px;padding:3px 8px}
 .bloc-view.active{background:var(--accent);color:#111;border-color:var(--accent)}
-.bloc-table{width:100%;border-collapse:collapse;font-size:12px}
-.bloc-table th{text-align:left;color:var(--text-muted);font-weight:500;padding:4px}
-.bloc-table td{padding:2px;vertical-align:top}
-.bloc-day{color:var(--text-secondary);white-space:nowrap}
-.bloc-cell{border-radius:4px;padding:4px 6px;color:#111;font-weight:500;min-height:24px}
-.bloc-cell.empty{background:transparent;color:var(--text-muted);font-weight:400}
-.bloc-cell.exam{outline:2px solid #f43f5e}
+.bloc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
+.bloc-day-card{background:var(--surface-soft);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.bloc-day-head{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--border)}
+.bloc-dow{font-size:11px;color:var(--text-secondary);letter-spacing:.04em}
+.bloc-date{font-size:18px;font-weight:700}
+.bloc-period{padding:8px 10px;border-top:1px solid rgba(255,255,255,.04)}
+.bloc-period:first-of-type{border-top:none}
+.bloc-period-label{font-size:10px;color:var(--text-secondary);font-weight:700;letter-spacing:.08em;margin-bottom:4px;text-transform:uppercase}
+.bloc-slot{border-radius:8px;padding:8px;color:#111;font-size:12px;font-weight:600;min-height:36px;display:flex;align-items:center}
+.bloc-slot.empty{background:rgba(255,255,255,.02);border:1px dashed var(--border);color:var(--text-muted);font-weight:500}
+.bloc-slot.exam{outline:2px solid #f43f5e}
 `;
 
 const CLIENT_JS = `
@@ -145,41 +150,64 @@ function allWidgets(){
   return [...document.querySelectorAll('.widget')].map(el => ({ el, id: el.dataset.instance, r: rectOf(el) }));
 }
 
-// Push any widget overlapping \`moving\` downward, recursively.
-function reflow(movingId){
-  const items = allWidgets();
-  const moving = items.find(i => i.id === movingId);
-  if (!moving) return items;
-  let changed = true;
-  while (changed){
-    changed = false;
-    for (const o of items){
-      if (o.id === movingId) continue;
-      const target = moving.r;
-      if (overlaps(target, o.r)){
-        o.r.row_start = target.row_start + target.row_span;
-        setRect(o.el, o.r);
-        changed = true;
-      }
+function overlapSize(aStart, aEnd, bStart, bEnd){
+  return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
+}
+
+function compactLayout(items){
+  const sorted = [...items].sort((a,b) => (a.r.row_start - b.r.row_start) || (a.r.col_start - b.r.col_start));
+  const rows = new Map();
+  for (const item of sorted){
+    const key = item.r.row_start + ':' + item.r.row_span;
+    if (!rows.has(key)) rows.set(key, []);
+    rows.get(key).push(item);
+  }
+  for (const line of rows.values()){
+    line.sort((a,b) => a.r.col_start - b.r.col_start);
+    let nextCol = 1;
+    for (const item of line){
+      item.r.col_start = nextCol;
+      nextCol += item.r.col_span;
     }
-    // propagate pushes among pushed widgets
-    for (let i = 0; i < items.length; i++){
-      for (let j = 0; j < items.length; j++){
-        if (i === j) continue;
-        const a = items[i], b = items[j];
-        if (a.id === movingId) continue;
-        if (overlaps(a.r, b.r)){
-          const ay = a.r.row_start + a.r.row_span;
-          const by = b.r.row_start + b.r.row_span;
-          // push whichever is lower
-          if (ay > by) { b.r.row_start = ay; setRect(b.el, b.r); }
-          else { a.r.row_start = by; setRect(a.el, a.r); }
-          changed = true;
-        }
-      }
+    if (line.length && nextCol !== COLS + 1){
+      const last = line[line.length - 1];
+      last.r.col_span = Math.max(3, COLS - last.r.col_start + 1);
     }
   }
-  return items;
+  for (const cur of sorted){
+    const maxColStart = COLS - cur.r.col_span + 1;
+    cur.r.col_start = Math.max(1, Math.min(maxColStart, cur.r.col_start));
+    cur.r.row_start = Math.max(1, cur.r.row_start);
+    while (cur.r.row_start > 1){
+      const test = { ...cur.r, row_start: cur.r.row_start - 1 };
+      if (items.some(i => i.id !== cur.id && overlaps(test, i.r))) break;
+      cur.r.row_start--;
+    }
+    setRect(cur.el, cur.r);
+  }
+  return sorted;
+}
+
+function pickNeighbor(items, self, side){
+  const mine = self.r;
+  let best = null;
+  let bestOverlap = 0;
+  for (const item of items){
+    if (item.id === self.id) continue;
+    const r = item.r;
+    if (side === 'e' && mine.col_start + mine.col_span !== r.col_start) continue;
+    if (side === 'w' && r.col_start + r.col_span !== mine.col_start) continue;
+    if (side === 's' && mine.row_start + mine.row_span !== r.row_start) continue;
+    if (side === 'n' && r.row_start + r.row_span !== mine.row_start) continue;
+    const overlap = (side === 'e' || side === 'w')
+      ? overlapSize(mine.row_start, mine.row_start + mine.row_span, r.row_start, r.row_start + r.row_span)
+      : overlapSize(mine.col_start, mine.col_start + mine.col_span, r.col_start, r.col_start + r.col_span);
+    if (overlap > bestOverlap){
+      best = item;
+      bestOverlap = overlap;
+    }
+  }
+  return best;
 }
 
 // Persist everyone's rect in one POST
@@ -197,41 +225,6 @@ function colRowFromEvent(e){
   return { col: c, row: r };
 }
 
-// DRAG
-let drag = null;
-document.addEventListener('mousedown', e => {
-  if (e.target.closest('[data-close]')) return;
-  if (e.target.closest('[data-resize]')) return;
-  const h = e.target.closest('[data-drag]');
-  if (!h) return;
-  const el = h.closest('.widget');
-  const start = rectOf(el);
-  const pos = colRowFromEvent(e);
-  drag = { el, id: h.dataset.drag, start, offsetCol: pos.col - start.col_start, offsetRow: pos.row - start.row_start };
-  el.classList.add('dragging');
-  h.classList.add('dragging');
-  e.preventDefault();
-});
-document.addEventListener('mousemove', e => {
-  if (!drag) return;
-  const pos = colRowFromEvent(e);
-  const newCol = Math.max(1, Math.min(COLS - drag.start.col_span + 1, pos.col - drag.offsetCol));
-  const newRow = Math.max(1, pos.row - drag.offsetRow);
-  const cur = rectOf(drag.el);
-  if (cur.col_start !== newCol || cur.row_start !== newRow){
-    setRect(drag.el, { ...drag.start, col_start: newCol, row_start: newRow });
-    reflow(drag.id);
-  }
-});
-document.addEventListener('mouseup', async () => {
-  if (!drag) return;
-  drag.el.classList.remove('dragging');
-  const hdr = drag.el.querySelector('[data-drag]'); if (hdr) hdr.classList.remove('dragging');
-  const items = reflow(drag.id);
-  await saveAll(items);
-  drag = null;
-});
-
 // RESIZE (8-direction)
 let resize = null;
 document.addEventListener('mousedown', e => {
@@ -239,35 +232,84 @@ document.addEventListener('mousedown', e => {
   if (!h) return;
   e.preventDefault();
   const el = h.closest('.widget');
-  resize = { el, id: h.dataset.resize, dir: h.dataset.dir, start: rectOf(el) };
+  const items = allWidgets();
+  const self = items.find(i => i.id === h.dataset.resize);
+  if (!self) return;
+  const n = pickNeighbor(items, self, 'n');
+  const s = pickNeighbor(items, self, 's');
+  const eSide = pickNeighbor(items, self, 'e');
+  const w = pickNeighbor(items, self, 'w');
+  resize = {
+    el,
+    id: h.dataset.resize,
+    dir: h.dataset.dir,
+    start: rectOf(el),
+    startItems: Object.fromEntries(items.map(i => [i.id, { ...i.r }])),
+    neighbors: { n: n?.id || null, s: s?.id || null, e: eSide?.id || null, w: w?.id || null }
+  };
 });
 document.addEventListener('mousemove', e => {
   if (!resize) return;
+  const items = allWidgets();
+  const map = Object.fromEntries(items.map(i => [i.id, i]));
+  const self = map[resize.id];
+  if (!self) return;
+  const restore = (id) => {
+    if (!id || !map[id]) return;
+    map[id].r = { ...resize.startItems[id] };
+    setRect(map[id].el, map[id].r);
+  };
+  restore(resize.id);
+  restore(resize.neighbors.e);
+  restore(resize.neighbors.w);
+  restore(resize.neighbors.n);
+  restore(resize.neighbors.s);
+
   const pos = colRowFromEvent(e);
   let { col_start, col_span, row_start, row_span } = resize.start;
   const dir = resize.dir;
-  if (dir.includes('e')){
-    col_span = Math.max(3, Math.min(COLS - col_start + 1, pos.col - col_start + 1));
+  if (dir.includes('e') && resize.neighbors.e){
+    const right = map[resize.neighbors.e].r;
+    const total = resize.start.col_span + right.col_span;
+    const nextSelfSpan = Math.max(3, Math.min(total - 3, pos.col - col_start + 1));
+    col_span = nextSelfSpan;
+    right.col_start = col_start + nextSelfSpan;
+    right.col_span = total - nextSelfSpan;
+    setRect(map[resize.neighbors.e].el, right);
   }
-  if (dir.includes('w')){
-    const right = col_start + col_span;
-    col_start = Math.min(right - 3, Math.max(1, pos.col));
-    col_span = right - col_start;
+  if (dir.includes('w') && resize.neighbors.w){
+    const left = map[resize.neighbors.w].r;
+    const total = resize.start.col_span + left.col_span;
+    const rightEdge = resize.start.col_start + resize.start.col_span;
+    col_start = Math.max(left.col_start + 3, Math.min(rightEdge - 3, pos.col));
+    col_span = rightEdge - col_start;
+    left.col_span = total - col_span;
+    setRect(map[resize.neighbors.w].el, left);
   }
-  if (dir.includes('s')){
-    row_span = Math.max(2, pos.row - row_start + 1);
+  if (dir.includes('s') && resize.neighbors.s){
+    const below = map[resize.neighbors.s].r;
+    const total = resize.start.row_span + below.row_span;
+    const nextSelfSpan = Math.max(2, Math.min(total - 2, pos.row - row_start + 1));
+    row_span = nextSelfSpan;
+    below.row_start = row_start + nextSelfSpan;
+    below.row_span = total - nextSelfSpan;
+    setRect(map[resize.neighbors.s].el, below);
   }
-  if (dir.includes('n')){
-    const bottom = row_start + row_span;
-    row_start = Math.min(bottom - 2, Math.max(1, pos.row));
+  if (dir.includes('n') && resize.neighbors.n){
+    const above = map[resize.neighbors.n].r;
+    const total = resize.start.row_span + above.row_span;
+    const bottom = resize.start.row_start + resize.start.row_span;
+    row_start = Math.max(above.row_start + 2, Math.min(bottom - 2, pos.row));
     row_span = bottom - row_start;
+    above.row_span = total - row_span;
+    setRect(map[resize.neighbors.n].el, above);
   }
-  setRect(resize.el, { col_start, col_span, row_start, row_span });
-  reflow(resize.id);
+  self.r = { col_start, col_span, row_start, row_span };
+  setRect(self.el, self.r);
 });
 document.addEventListener('mouseup', async () => {
   if (!resize) return;
-  const items = reflow(resize.id);
+  const items = compactLayout(allWidgets());
   await saveAll(items);
   resize = null;
 });
@@ -279,8 +321,12 @@ document.addEventListener('click', async e => {
     e.preventDefault();
     const widget = c.closest('[data-instance]');
     const id = c.dataset.close;
+    const closedRect = rectOf(widget);
+    widget.remove();
+    const items = compactLayout(allWidgets());
+    await saveAll(items);
     await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ instance_id: id, ...rectOf(widget), open: 0 })
+      body: JSON.stringify({ instance_id: id, ...closedRect, open: 0 })
     });
     location.reload();
     return;
@@ -312,6 +358,26 @@ document.addEventListener('click', async e => {
   if (!b) return;
   await fetch('/dashboard/api/widget/create', { method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ widget_type: b.dataset.addType })
+  });
+  location.reload();
+});
+
+document.addEventListener('click', async e => {
+  const save = e.target.closest('[data-slot-save]');
+  if (save){
+    await fetch('/dashboard/api/layout-slot/save', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ slot: Number(save.dataset.slotSave) })
+    });
+    return;
+  }
+  const load = e.target.closest('[data-slot-load]');
+  if (!load) return;
+  await fetch('/dashboard/api/layout-slot/load', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ slot: Number(load.dataset.slotLoad) })
   });
   location.reload();
 });
@@ -657,17 +723,18 @@ async function renderBlocus(env, username, configJson) {
   for (let d = new Date(from); d <= new Date(to); d.setDate(d.getDate() + 1)) {
     days.push(new Date(d));
   }
-  const fmtDay = d => d.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: '2-digit' });
+  const dayLabel = d => d.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase();
+  const dateLabel = d => String(d.getDate()).padStart(2, '0');
   const ymdDay = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
-  const cell = (day, period) => {
+  const cell = (day, period, emptyLabel) => {
     const s = slotByKey[slotKey(ymdDay(day), period)];
-    if (!s) return `<div class="bloc-cell empty">·</div>`;
+    if (!s) return `<div class="bloc-slot empty">${emptyLabel}</div>`;
     const c = courseById[s.course_id];
     const sec = s.section_id ? sectionById[s.section_id] : null;
     const label = c ? (sec ? `${c.name} · ${sec.name}` : c.name) : (s.exam_note || 'slot');
     const bg = c ? c.color : 'var(--surface-hover)';
-    return `<div class="bloc-cell${s.is_exam ? ' exam' : ''}" style="background:${esc(bg)}">${esc(label)}</div>`;
+    return `<div class="bloc-slot${s.is_exam ? ' exam' : ''}" style="background:${esc(bg)}">${esc(label)}</div>`;
   };
 
   const boardSel = `<select data-blocus-board>${boards.map(b => `<option value="${esc(b.id)}" ${b.id===boardId?'selected':''}>${esc(b.name)}</option>`).join('')}</select>`;
@@ -675,18 +742,26 @@ async function renderBlocus(env, username, configJson) {
     `<button class="bloc-view ${v===view?'active':''}" data-blocus-view="${v}">${v==='two'?'2 weeks':v}</button>`
   ).join('');
 
-  const rows = days.map(d => `
-    <tr>
-      <td class="bloc-day">${esc(fmtDay(d))}</td>
-      <td>${cell(d,'morning')}</td>
-      <td>${cell(d,'afternoon')}</td>
-    </tr>`).join('');
+  const cards = days.map(d => `
+    <article class="bloc-day-card">
+      <header class="bloc-day-head">
+        <span class="bloc-dow">${esc(dayLabel(d))}</span>
+        <span class="bloc-date">${esc(dateLabel(d))}</span>
+      </header>
+      <section class="bloc-period">
+        <div class="bloc-period-label">Morning</div>
+        ${cell(d, 'morning', 'No course selected')}
+      </section>
+      <section class="bloc-period">
+        <div class="bloc-period-label">Afternoon</div>
+        ${cell(d, 'afternoon', 'No course selected')}
+      </section>
+    </article>`).join('');
 
   return `
   <div class="blocus">
     <div class="bloc-bar">${boardSel}<div class="bloc-views">${viewBtns}</div></div>
-    <table class="bloc-table"><thead><tr><th></th><th>AM</th><th>PM</th></tr></thead>
-    <tbody>${rows}</tbody></table>
+    <div class="bloc-grid">${cards}</div>
   </div>`;
 }
 
@@ -746,7 +821,7 @@ function renderHeader(user) {
 </header>`;
 }
 
-function renderPage(user, layout, bodies) {
+function renderPage(user, layout, bodies, slots = {}) {
   const open = layout.filter(w => w.open);
   const closed = layout.filter(w => !w.open);
 
@@ -772,7 +847,7 @@ function renderPage(user, layout, bodies) {
       .map(d => `<div class="resize-handle ${d}" data-resize="${esc(w.instance_id)}" data-dir="${d}"></div>`).join('');
     return `
     <section class="widget" data-instance="${esc(w.instance_id)}" data-type="${esc(w.widget_type)}" style="${widgetStyle(w)}">
-      <div class="widget-header" data-drag="${esc(w.instance_id)}">
+      <div class="widget-header">
         <div class="title">${label}</div>
         <button class="close" data-close="${esc(w.instance_id)}" title="Close">×</button>
       </div>
@@ -791,6 +866,14 @@ ${renderHeader(user)}
 <div class="page">
   <div class="topbar">
     <h1>Dashboard · ${esc(user.username)}</h1>
+    <div class="layout-slots">
+      <button class="slot-btn" data-slot-load="1">Slot 1 ${slots[1] ? '•' : ''}</button>
+      <button class="slot-btn save" data-slot-save="1">Save</button>
+      <button class="slot-btn" data-slot-load="2">Slot 2 ${slots[2] ? '•' : ''}</button>
+      <button class="slot-btn save" data-slot-save="2">Save</button>
+      <button class="slot-btn" data-slot-load="3">Slot 3 ${slots[3] ? '•' : ''}</button>
+      <button class="slot-btn save" data-slot-save="3">Save</button>
+    </div>
     <div class="add-widget">
       <button data-add-toggle>+ Add widget</button>
       <div class="add-widget-menu" id="addMenu">${addMenu}</div>
@@ -826,6 +909,30 @@ async function loadLayout(env, username) {
     seeded.push({ instance_id: id, username, ...w, updated_at: now });
   }
   return seeded;
+}
+
+async function ensureLayoutSlotsTable(env) {
+  await env.DASHBOARD_DB.prepare(
+    `CREATE TABLE IF NOT EXISTS layout_slots (
+      username    TEXT NOT NULL,
+      slot_index  INTEGER NOT NULL,
+      payload     TEXT NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      PRIMARY KEY (username, slot_index)
+    )`
+  ).run();
+}
+
+async function loadSlots(env, username) {
+  await ensureLayoutSlotsTable(env);
+  const { results } = await env.DASHBOARD_DB.prepare(
+    'SELECT slot_index FROM layout_slots WHERE username = ?'
+  ).bind(username).all();
+  const out = { 1: false, 2: false, 3: false };
+  for (const row of results) {
+    if (row.slot_index >= 1 && row.slot_index <= 3) out[row.slot_index] = true;
+  }
+  return out;
 }
 
 export default {
@@ -921,6 +1028,66 @@ export default {
       return new Response('OK');
     }
 
+    if (path === '/api/layout-slot/save' && req.method === 'POST') {
+      const body = await req.json();
+      const slot = Number(body.slot);
+      if (![1, 2, 3].includes(slot)) return new Response('bad slot', { status: 400 });
+      const layout = await loadLayout(env, user.username);
+      const payload = JSON.stringify(layout.map(w => ({
+        instance_id: w.instance_id,
+        widget_type: w.widget_type,
+        col_start: w.col_start,
+        col_span: w.col_span,
+        row_start: w.row_start,
+        row_span: w.row_span,
+        open: w.open ? 1 : 0,
+        config: w.config || '{}'
+      })));
+      await ensureLayoutSlotsTable(env);
+      await env.DASHBOARD_DB.prepare(
+        `INSERT INTO layout_slots (username, slot_index, payload, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(username, slot_index) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`
+      ).bind(user.username, slot, payload, Date.now()).run();
+      return new Response('OK');
+    }
+
+    if (path === '/api/layout-slot/load' && req.method === 'POST') {
+      const body = await req.json();
+      const slot = Number(body.slot);
+      if (![1, 2, 3].includes(slot)) return new Response('bad slot', { status: 400 });
+      await ensureLayoutSlotsTable(env);
+      const row = await env.DASHBOARD_DB.prepare(
+        'SELECT payload FROM layout_slots WHERE username = ? AND slot_index = ?'
+      ).bind(user.username, slot).first();
+      if (!row?.payload) return new Response('empty slot', { status: 404 });
+      let saved = [];
+      try { saved = JSON.parse(row.payload); } catch { return new Response('bad payload', { status: 400 }); }
+      if (!Array.isArray(saved) || !saved.length) return new Response('empty payload', { status: 400 });
+
+      await env.DASHBOARD_DB.prepare('DELETE FROM widget_layout WHERE username = ?').bind(user.username).run();
+      for (const w of saved) {
+        if (!VALID_TYPES.includes(w.widget_type)) continue;
+        await env.DASHBOARD_DB.prepare(
+          `INSERT INTO widget_layout
+           (instance_id, username, widget_type, col_start, col_span, row_start, row_span, open, config, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          w.instance_id || crypto.randomUUID(),
+          user.username,
+          w.widget_type,
+          Math.max(1, w.col_start | 0),
+          Math.max(3, w.col_span | 0),
+          Math.max(1, w.row_start | 0),
+          Math.max(2, w.row_span | 0),
+          w.open ? 1 : 0,
+          typeof w.config === 'string' ? w.config : JSON.stringify(w.config || {}),
+          Date.now()
+        ).run();
+      }
+      return new Response('OK');
+    }
+
     if (path === '/api/widget/create' && req.method === 'POST') {
       const body = await req.json();
       const { widget_type } = body;
@@ -952,12 +1119,13 @@ export default {
 
     if (path === '/' || path === '') {
       const layout = await loadLayout(env, user.username);
+      const slots = await loadSlots(env, user.username);
       const bodies = {};
       for (const w of layout) {
         if (!w.open) continue;
         bodies[w.instance_id] = await renderWidget(env, user.username, w);
       }
-      return new Response(renderPage(user, layout, bodies), {
+      return new Response(renderPage(user, layout, bodies, slots), {
         headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }
       });
     }

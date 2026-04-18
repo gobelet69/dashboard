@@ -11,3 +11,11 @@ CREATE TABLE IF NOT EXISTS widget_layout (
   updated_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_widget_layout_user ON widget_layout(username);
+
+CREATE TABLE IF NOT EXISTS layout_slots (
+  username    TEXT NOT NULL,
+  slot_index  INTEGER NOT NULL,
+  payload     TEXT NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  PRIMARY KEY (username, slot_index)
+);
