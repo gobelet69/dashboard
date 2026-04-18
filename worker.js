@@ -58,6 +58,15 @@ input[type=text]{background:var(--surface-soft);border:1px solid var(--border);c
 .kanban-card .delcard{background:transparent;border:none;color:var(--text-muted);padding:0 4px}
 .kanban-card .delcard:hover{color:#f43f5e}
 .addcard input{font-size:12px;padding:4px 6px}
+.habits{width:100%;font-size:12px;border-collapse:collapse}
+.habits th,.habits td{padding:4px 6px;text-align:left;vertical-align:middle}
+.habits .hb-days td{color:var(--text-muted);font-size:11px}
+.habits .hb-dlabel{display:inline-block;width:22px;text-align:center;margin-right:4px}
+.habits .hb-name{font-weight:500}
+.habits .hb-streak{color:var(--text-secondary);white-space:nowrap}
+.hb-cells{display:flex;gap:4px}
+.hb-cell{width:22px;height:22px;border-radius:4px;border:1px solid var(--border);background:var(--surface-soft);padding:0;cursor:pointer}
+.hb-cell.done{background:var(--accent);border-color:var(--accent)}
 `;
 
 const CLIENT_JS = `
@@ -223,6 +232,15 @@ document.addEventListener('drop', async e => {
   document.querySelector('[data-body=todolist]').innerHTML = await r.text();
   draggingCard = null;
 });
+
+document.addEventListener('click', async e => {
+  const c = e.target.closest('.hb-cell');
+  if (!c) return;
+  const fd = new FormData();
+  fd.set('habitId', c.dataset.habit); fd.set('date', c.dataset.date);
+  await fetch('/dashboard/api/habits/toggle', { method:'POST', body: fd });
+  c.classList.toggle('done');
+});
 `;
 
 async function renderVault(env, username, configJson) {
@@ -309,6 +327,62 @@ async function renderTodo(env, username, configJson) {
     <div class="todo-bar">${select}</div>
     <div class="kanban">${cols || '<div class="muted">No lists in this board.</div>'}</div>
   </div>`;
+}
+
+function ymd(d) {
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+
+function streakFor(habitId, logsByHabit) {
+  const completed = new Set((logsByHabit[habitId] || []).map(l => l.date));
+  let s = 0;
+  const d = new Date();
+  while (completed.has(ymd(d))) { s++; d.setDate(d.getDate() - 1); }
+  return s;
+}
+
+async function renderHabits(env, username) {
+  const { results: habits } = await env.HABITS_DB.prepare(
+    'SELECT * FROM habits WHERE username = ? ORDER BY created_at ASC'
+  ).bind(username).all();
+  const { results: logs } = await env.HABITS_DB.prepare(
+    'SELECT * FROM habit_logs WHERE username = ? AND completed = 1'
+  ).bind(username).all();
+
+  const logsByHabit = {};
+  for (const l of logs) (logsByHabit[l.habit_id] = logsByHabit[l.habit_id] || []).push(l);
+
+  if (!habits.length) {
+    return '<div class="muted">No habits yet. Create one in <a target="_top" href="/habits">the main app</a>.</div>';
+  }
+
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    days.push({ date: ymd(d), label: d.toLocaleDateString(undefined,{weekday:'short'}) });
+  }
+
+  const rows = habits.map(h => {
+    const completed = new Set((logsByHabit[h.id] || []).map(l => l.date));
+    const cells = days.map(d =>
+      `<button class="hb-cell ${completed.has(d.date)?'done':''}" data-habit="${esc(h.id)}" data-date="${d.date}" title="${d.date}"></button>`
+    ).join('');
+    return `
+      <tr>
+        <td class="hb-name">${esc(h.name)}</td>
+        <td class="hb-streak">🔥${streakFor(h.id, logsByHabit)}</td>
+        <td><div class="hb-cells">${cells}</div></td>
+      </tr>`;
+  }).join('');
+
+  return `
+  <table class="habits">
+    <thead>
+      <tr class="hb-days"><td></td><td></td><td>${days.map(d => `<span class="hb-dlabel">${esc(d.label)}</span>`).join('')}</td></tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`;
 }
 
 function renderPage(user, layout, widgetBodies) {
@@ -425,6 +499,23 @@ export default {
       });
     }
 
+    if (path === '/api/habits/toggle' && req.method === 'POST') {
+      const fd = await req.formData();
+      const hid = fd.get('habitId'), date = fd.get('date');
+      const existing = await env.HABITS_DB.prepare(
+        'SELECT * FROM habit_logs WHERE habit_id = ? AND date = ? AND username = ?'
+      ).bind(hid, date, user.username).first();
+      if (existing) {
+        await env.HABITS_DB.prepare('UPDATE habit_logs SET completed = ? WHERE id = ?')
+          .bind(existing.completed ? 0 : 1, existing.id).run();
+      } else {
+        await env.HABITS_DB.prepare(
+          'INSERT INTO habit_logs (id, habit_id, username, date, completed) VALUES (?, ?, ?, ?, 1)'
+        ).bind(crypto.randomUUID(), hid, user.username, date).run();
+      }
+      return new Response('OK');
+    }
+
     if (path === '/api/layout' && req.method === 'POST') {
       const body = await req.json();
       const { widget_id, col_start, col_span, row_start, row_span, open, config } = body;
@@ -447,10 +538,11 @@ export default {
       const layout = await loadLayout(env, user.username);
       const vaultLayout = layout.find(w => w.widget_id === 'vault');
       const todoLayout = layout.find(w => w.widget_id === 'todolist');
+      const habitsLayout = layout.find(w => w.widget_id === 'habits');
       const widgetBodies = {
         vault: vaultLayout.open ? await renderVault(env, user.username, vaultLayout.config) : '',
         todolist: todoLayout.open ? await renderTodo(env, user.username, todoLayout.config) : '',
-        habits: '<div class="muted">habits widget pending…</div>',
+        habits: habitsLayout.open ? await renderHabits(env, user.username) : '',
         courses: '<div class="muted">courses widget pending…</div>',
       };
       return new Response(renderPage(user, layout, widgetBodies), {
