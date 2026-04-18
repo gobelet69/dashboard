@@ -1,11 +1,13 @@
-const DEFAULT_LAYOUT = [
-  { widget_id: 'vault',    col_start: 1, col_span: 6, row_start: 1, row_span: 3, open: 1, config: '{"path":""}' },
-  { widget_id: 'todolist', col_start: 7, col_span: 6, row_start: 1, row_span: 3, open: 1, config: '{"board_id":null}' },
-  { widget_id: 'habits',   col_start: 1, col_span: 7, row_start: 4, row_span: 2, open: 1, config: '{}' },
-  { widget_id: 'courses',  col_start: 8, col_span: 5, row_start: 4, row_span: 2, open: 1, config: '{}' },
+const DEFAULT_INSTANCES = [
+  { widget_type: 'vault',    col_start: 1, col_span: 6, row_start: 1, row_span: 3, open: 1, config: '{"path":""}' },
+  { widget_type: 'todolist', col_start: 7, col_span: 6, row_start: 1, row_span: 3, open: 1, config: '{"board_id":null}' },
+  { widget_type: 'habits',   col_start: 1, col_span: 7, row_start: 4, row_span: 2, open: 1, config: '{}' },
+  { widget_type: 'courses',  col_start: 8, col_span: 5, row_start: 4, row_span: 2, open: 1, config: '{}' },
 ];
 
-const WIDGET_TITLES = { vault: '🗄️ Vault', todolist: '📋 Todolist', habits: '📈 Habits', courses: '🎓 Courses' };
+const VALID_TYPES = ['vault', 'todolist', 'habits', 'courses', 'blocus'];
+
+const WIDGET_TITLES = { vault: '🗄️ Vault', todolist: '📋 Todolist', habits: '📈 Habits', courses: '🎓 Courses', blocus: '📅 Blocus' };
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -108,12 +110,12 @@ function setRect(el, r){
 }
 
 let saveTimer;
-function save(widget_id, patch){
+function save(instanceId, patch){
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
-    const el = document.querySelector('[data-widget="'+widget_id+'"]');
+    const el = document.querySelector('[data-instance="'+instanceId+'"]');
     const r = el ? widgetRect(el) : { col_start:1, col_span:6, row_start:1, row_span:2 };
-    const body = Object.assign({ widget_id, open:1, config:'{}' }, r, patch);
+    const body = Object.assign({ instance_id: instanceId, open:1, config:'{}' }, r, patch);
     await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   }, 300);
 }
@@ -121,18 +123,23 @@ function save(widget_id, patch){
 document.addEventListener('click', e => {
   const c = e.target.closest('[data-close]');
   if (c) {
-    const id = c.dataset.close;
-    save(id, { open:0 });
-    setTimeout(() => location.reload(), 350);
+    e.preventDefault();
+    const instanceId = c.dataset.close;
+    const widget = c.closest('[data-instance]');
+    const r = widget ? widgetRect(widget) : { col_start:1, col_span:6, row_start:1, row_span:2 };
+    fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ instance_id: instanceId, ...r, open: 0 })
+    }).then(() => location.reload());
+    return;
   }
   const r = e.target.closest('[data-reopen]');
   if (r) {
-    const id = r.dataset.reopen;
+    const instanceId = r.dataset.reopen;
     const widgets = [...document.querySelectorAll('.widget')];
     let maxRow = 1;
     for (const w of widgets){ const rr = widgetRect(w); maxRow = Math.max(maxRow, rr.row_start + rr.row_span); }
     fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ widget_id:id, col_start:1, col_span:6, row_start:maxRow, row_span:3, open:1, config:'{}' })
+      body: JSON.stringify({ instance_id: instanceId, col_start:1, col_span:6, row_start:maxRow, row_span:3, open:1 })
     }).then(() => location.reload());
   }
 });
@@ -168,44 +175,41 @@ document.addEventListener('click', async e => {
   const n = e.target.closest('[data-navvault]');
   if (!n) return;
   e.preventDefault();
+  const widget = n.closest('[data-instance]');
   const newPath = n.dataset.navvault;
-  const wEl = document.querySelector('[data-widget=vault]');
-  const s = wEl.style;
-  const col = s.gridColumn.match(/(\\d+) ?\\/ ?span ?(\\d+)/);
-  const row = s.gridRow.match(/(\\d+) ?\\/ ?span ?(\\d+)/);
+  const r = widgetRect(widget);
   await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ widget_id:'vault', col_start:+col[1], col_span:+col[2], row_start:+row[1], row_span:+row[2], open:1, config: JSON.stringify({ path:newPath }) })
+    body: JSON.stringify({ instance_id: widget.dataset.instance, ...r, open:1, config: JSON.stringify({ path:newPath }) })
   });
-  const r = await fetch('/dashboard/api/vault?path=' + encodeURIComponent(newPath));
-  document.querySelector('[data-body=vault]').innerHTML = await r.text();
+  const res = await fetch('/dashboard/api/vault?path=' + encodeURIComponent(newPath));
+  widget.querySelector('[data-body]').innerHTML = await res.text();
 });
 
 document.addEventListener('change', async e => {
   const s = e.target.closest('[data-todo-board]');
   if (!s) return;
   const bid = s.value;
-  const el = document.querySelector('[data-widget=todolist]');
-  const st = el.style;
-  const col = st.gridColumn.match(/(\\d+) ?\\/ ?span ?(\\d+)/);
-  const row = st.gridRow.match(/(\\d+) ?\\/ ?span ?(\\d+)/);
+  const widget = s.closest('[data-instance]');
+  const r = widgetRect(widget);
   await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ widget_id:'todolist', col_start:+col[1], col_span:+col[2], row_start:+row[1], row_span:+row[2], open:1, config: JSON.stringify({ board_id:bid }) })
+    body: JSON.stringify({ instance_id: widget.dataset.instance, ...r, open:1, config: JSON.stringify({ board_id:bid }) })
   });
-  const r = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
-  document.querySelector('[data-body=todolist]').innerHTML = await r.text();
+  const res = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
+  widget.querySelector('[data-body]').innerHTML = await res.text();
 });
 
 document.addEventListener('submit', async e => {
   const f = e.target.closest('[data-addcard]');
   if (!f) return;
   e.preventDefault();
+  const widget = f.closest('[data-instance]');
   const fd = new FormData(f);
   fd.set('listId', f.dataset.addcard);
   await fetch('/dashboard/api/todo/card/create', { method:'POST', body: fd });
-  const sel = document.querySelector('[data-todo-board]');
+  const sel = widget ? widget.querySelector('[data-todo-board]') : document.querySelector('[data-todo-board]');
   const bid = sel ? sel.value : '';
-  const r = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
-  document.querySelector('[data-body=todolist]').innerHTML = await r.text();
+  const res = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
+  if (widget) widget.querySelector('[data-body]').innerHTML = await res.text();
 });
 
 document.addEventListener('click', async e => {
@@ -239,6 +243,7 @@ document.addEventListener('drop', async e => {
   if (!col || !draggingCard) return;
   e.preventDefault();
   col.classList.remove('drag-over');
+  const widget = col.closest('[data-instance]');
   const newListId = col.dataset.list;
   const cardId = draggingCard.dataset.card;
   const cards = [...col.querySelectorAll('.kanban-card')];
@@ -250,10 +255,10 @@ document.addEventListener('drop', async e => {
   const fd = new FormData();
   fd.set('cardId', cardId); fd.set('newListId', newListId); fd.set('newPosition', npos);
   await fetch('/dashboard/api/todo/card/move', { method:'POST', body: fd });
-  const sel = document.querySelector('[data-todo-board]');
+  const sel = widget ? widget.querySelector('[data-todo-board]') : document.querySelector('[data-todo-board]');
   const bid = sel ? sel.value : '';
-  const r = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
-  document.querySelector('[data-body=todolist]').innerHTML = await r.text();
+  const res = await fetch('/dashboard/api/todo/board?boardId=' + encodeURIComponent(bid));
+  if (widget) widget.querySelector('[data-body]').innerHTML = await res.text();
   draggingCard = null;
 });
 
@@ -437,6 +442,19 @@ async function renderCourses(env, username) {
   }).join('');
 }
 
+async function renderBlocus(env, username, configJson) {
+  return '<div class="muted">blocus coming in Task 2</div>';
+}
+
+async function renderWidget(env, username, w) {
+  if (w.widget_type === 'vault')    return await renderVault(env, username, w.config);
+  if (w.widget_type === 'todolist') return await renderTodo(env, username, w.config);
+  if (w.widget_type === 'habits')   return await renderHabits(env, username);
+  if (w.widget_type === 'courses')  return await renderCourses(env, username);
+  if (w.widget_type === 'blocus')   return await renderBlocus(env, username, w.config);
+  return '<div class="muted">unknown widget</div>';
+}
+
 function renderHeader(user) {
   const userId = 'dUW';
   const appsId = 'dApps';
@@ -484,24 +502,34 @@ function renderHeader(user) {
 </header>`;
 }
 
-function renderPage(user, layout, widgetBodies) {
+function renderPage(user, layout, bodies) {
   const open = layout.filter(w => w.open);
   const closed = layout.filter(w => !w.open);
 
+  // Count occurrences per type to suffix duplicates
+  const counters = {};
+  const labelFor = (w) => {
+    const t = w.widget_type;
+    counters[t] = (counters[t] || 0) + 1;
+    return counters[t] > 1 ? `${WIDGET_TITLES[t] || t} #${counters[t]}` : (WIDGET_TITLES[t] || t);
+  };
+
   const chips = closed.map(w =>
-    `<button class="chip" data-reopen="${w.widget_id}">+ ${esc(WIDGET_TITLES[w.widget_id])}</button>`
+    `<button class="chip" data-reopen="${esc(w.instance_id)}">+ ${esc(WIDGET_TITLES[w.widget_type] || w.widget_type)}</button>`
   ).join('');
 
-  const widgets = open.map(w => `
-    <section class="widget" data-widget="${w.widget_id}" style="${widgetStyle(w)}">
+  const widgets = open.map(w => {
+    const label = labelFor(w);
+    return `
+    <section class="widget" data-instance="${esc(w.instance_id)}" data-type="${esc(w.widget_type)}" style="${widgetStyle(w)}">
       <div class="widget-header">
-        <div class="title">${WIDGET_TITLES[w.widget_id]}</div>
-        <button class="close" data-close="${w.widget_id}" title="Close">×</button>
+        <div class="title">${label}</div>
+        <button class="close" data-close="${esc(w.instance_id)}" title="Close">×</button>
       </div>
-      <div class="widget-body" data-body="${w.widget_id}">${widgetBodies[w.widget_id] || ''}</div>
-      <div class="resize-handle" data-resize="${w.widget_id}"></div>
-    </section>
-  `).join('');
+      <div class="widget-body" data-body="${esc(w.instance_id)}">${bodies[w.instance_id] || ''}</div>
+      <div class="resize-handle" data-resize="${esc(w.instance_id)}"></div>
+    </section>`;
+  }).join('');
 
   return `<!DOCTYPE html>
 <html><head>
@@ -531,16 +559,19 @@ async function getUser(req, env) {
 
 async function loadLayout(env, username) {
   const { results } = await env.DASHBOARD_DB.prepare(
-    'SELECT * FROM widget_layout WHERE username = ?'
+    'SELECT * FROM widget_layout WHERE username = ? ORDER BY row_start, col_start'
   ).bind(username).all();
   if (results.length > 0) return results;
   const now = Date.now();
-  for (const w of DEFAULT_LAYOUT) {
+  const seeded = [];
+  for (const w of DEFAULT_INSTANCES) {
+    const id = crypto.randomUUID();
     await env.DASHBOARD_DB.prepare(
-      'INSERT INTO widget_layout (username, widget_id, col_start, col_span, row_start, row_span, open, config, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).bind(username, w.widget_id, w.col_start, w.col_span, w.row_start, w.row_span, w.open, w.config, now).run();
+      'INSERT INTO widget_layout (instance_id, username, widget_type, col_start, col_span, row_start, row_span, open, config, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).bind(id, username, w.widget_type, w.col_start, w.col_span, w.row_start, w.row_span, w.open, w.config, now).run();
+    seeded.push({ instance_id: id, username, ...w, updated_at: now });
   }
-  return DEFAULT_LAYOUT.map(w => ({ ...w, username, updated_at: now }));
+  return seeded;
 }
 
 export default {
@@ -620,35 +651,59 @@ export default {
 
     if (path === '/api/layout' && req.method === 'POST') {
       const body = await req.json();
-      const { widget_id, col_start, col_span, row_start, row_span, open, config } = body;
-      if (!['vault', 'todolist', 'habits', 'courses'].includes(widget_id)) {
-        return new Response('bad widget', { status: 400 });
+      const updates = Array.isArray(body) ? body : [body];
+      for (const u of updates) {
+        if (!u.instance_id) continue;
+        await env.DASHBOARD_DB.prepare(
+          `UPDATE widget_layout
+           SET col_start = ?, col_span = ?, row_start = ?, row_span = ?, open = ?, config = COALESCE(?, config), updated_at = ?
+           WHERE instance_id = ? AND username = ?`
+        ).bind(
+          u.col_start|0, u.col_span|0, u.row_start|0, u.row_span|0, u.open ? 1 : 0,
+          u.config == null ? null : (typeof u.config === 'string' ? u.config : JSON.stringify(u.config)),
+          Date.now(), u.instance_id, user.username
+        ).run();
       }
+      return new Response('OK');
+    }
+
+    if (path === '/api/widget/create' && req.method === 'POST') {
+      const body = await req.json();
+      const { widget_type } = body;
+      if (!VALID_TYPES.includes(widget_type)) return new Response('bad type', { status: 400 });
+      const row = await env.DASHBOARD_DB.prepare(
+        'SELECT MAX(row_start + row_span) AS maxrow FROM widget_layout WHERE username = ?'
+      ).bind(user.username).first();
+      const maxrow = (row?.maxrow) || 1;
+      const defaults = {
+        vault:    { col_span: 6, row_span: 3, config: '{"path":""}' },
+        todolist: { col_span: 6, row_span: 3, config: '{"board_id":null}' },
+        habits:   { col_span: 7, row_span: 2, config: '{}' },
+        courses:  { col_span: 5, row_span: 2, config: '{}' },
+        blocus:   { col_span: 8, row_span: 3, config: '{"board_id":null,"view":"week"}' },
+      }[widget_type];
+      const id = crypto.randomUUID();
       await env.DASHBOARD_DB.prepare(
-        `UPDATE widget_layout
-         SET col_start = ?, col_span = ?, row_start = ?, row_span = ?, open = ?, config = ?, updated_at = ?
-         WHERE username = ? AND widget_id = ?`
-      ).bind(
-        col_start|0, col_span|0, row_start|0, row_span|0, open ? 1 : 0,
-        typeof config === 'string' ? config : JSON.stringify(config || {}),
-        Date.now(), user.username, widget_id
-      ).run();
+        'INSERT INTO widget_layout (instance_id, username, widget_type, col_start, col_span, row_start, row_span, open, config, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, 1, ?, ?)'
+      ).bind(id, user.username, widget_type, defaults.col_span, maxrow, defaults.row_span, defaults.config, Date.now()).run();
+      return new Response(JSON.stringify({ instance_id: id }), { headers: { 'Content-Type': 'application/json' } });
+    }
+
+    if (path === '/api/widget/delete' && req.method === 'POST') {
+      const body = await req.json();
+      await env.DASHBOARD_DB.prepare('DELETE FROM widget_layout WHERE instance_id = ? AND username = ?')
+        .bind(body.instance_id, user.username).run();
       return new Response('OK');
     }
 
     if (path === '/' || path === '') {
       const layout = await loadLayout(env, user.username);
-      const vaultLayout = layout.find(w => w.widget_id === 'vault');
-      const todoLayout = layout.find(w => w.widget_id === 'todolist');
-      const habitsLayout = layout.find(w => w.widget_id === 'habits');
-      const coursesLayout = layout.find(w => w.widget_id === 'courses');
-      const widgetBodies = {
-        vault: vaultLayout.open ? await renderVault(env, user.username, vaultLayout.config) : '',
-        todolist: todoLayout.open ? await renderTodo(env, user.username, todoLayout.config) : '',
-        habits: habitsLayout.open ? await renderHabits(env, user.username) : '',
-        courses: coursesLayout.open ? await renderCourses(env, user.username) : '',
-      };
-      return new Response(renderPage(user, layout, widgetBodies), {
+      const bodies = {};
+      for (const w of layout) {
+        if (!w.open) continue;
+        bodies[w.instance_id] = await renderWidget(env, user.username, w);
+      }
+      return new Response(renderPage(user, layout, bodies), {
         headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }
       });
     }
