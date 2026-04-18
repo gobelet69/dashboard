@@ -67,6 +67,12 @@ input[type=text]{background:var(--surface-soft);border:1px solid var(--border);c
 .hb-cells{display:flex;gap:4px}
 .hb-cell{width:22px;height:22px;border-radius:4px;border:1px solid var(--border);background:var(--surface-soft);padding:0;cursor:pointer}
 .hb-cell.done{background:var(--accent);border-color:var(--accent)}
+.course-section{margin-bottom:12px}
+.course-section-title{font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
+.course-tiles{display:flex;flex-wrap:wrap;gap:6px}
+.course-tile{display:flex;align-items:center;gap:6px;background:var(--surface-soft);border:1px solid var(--border);border-radius:8px;padding:6px 10px;color:var(--text);font-size:12px}
+.course-tile:hover{background:var(--surface-hover);color:var(--text)}
+.course-tile .emoji{font-size:14px}
 `;
 
 const CLIENT_JS = `
@@ -385,6 +391,34 @@ async function renderHabits(env, username) {
   </table>`;
 }
 
+async function renderCourses(env, username) {
+  const { results: sections } = await env.COURSES_DB.prepare(
+    'SELECT * FROM sections WHERE username = ? AND hidden = 0 ORDER BY position ASC'
+  ).bind(username).all();
+  const { results: tiles } = await env.COURSES_DB.prepare(
+    'SELECT * FROM tiles WHERE username = ? ORDER BY position ASC'
+  ).bind(username).all();
+
+  if (!sections.length) {
+    return '<div class="muted">No sections yet. Create them in <a target="_top" href="/courses">the main app</a>.</div>';
+  }
+
+  return sections.map(s => {
+    const sTiles = tiles.filter(t => t.section_id === s.id);
+    const tileEls = sTiles.map(t =>
+      `<a class="course-tile" href="${esc(t.url)}" target="_blank" rel="noopener">
+         <span class="emoji">${esc(t.emoji || '📚')}</span>
+         <span class="name">${esc(t.name)}</span>
+       </a>`
+    ).join('');
+    return `
+      <div class="course-section">
+        <div class="course-section-title">${esc(s.name)}</div>
+        <div class="course-tiles">${tileEls || '<span class="muted">empty</span>'}</div>
+      </div>`;
+  }).join('');
+}
+
 function renderPage(user, layout, widgetBodies) {
   const open = layout.filter(w => w.open);
   const closed = layout.filter(w => !w.open);
@@ -539,11 +573,12 @@ export default {
       const vaultLayout = layout.find(w => w.widget_id === 'vault');
       const todoLayout = layout.find(w => w.widget_id === 'todolist');
       const habitsLayout = layout.find(w => w.widget_id === 'habits');
+      const coursesLayout = layout.find(w => w.widget_id === 'courses');
       const widgetBodies = {
         vault: vaultLayout.open ? await renderVault(env, user.username, vaultLayout.config) : '',
         todolist: todoLayout.open ? await renderTodo(env, user.username, todoLayout.config) : '',
         habits: habitsLayout.open ? await renderHabits(env, user.username) : '',
-        courses: '<div class="muted">courses widget pending…</div>',
+        courses: coursesLayout.open ? await renderCourses(env, user.username) : '',
       };
       return new Response(renderPage(user, layout, widgetBodies), {
         headers: { 'Content-Type': 'text/html; charset=utf-8' }
