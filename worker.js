@@ -308,16 +308,19 @@ document.addEventListener('mousedown', e => {
   const h = e.target.closest('[data-drag]');
   if (!h) return;
   const el = h.closest('.widget');
-  drag = { id: h.dataset.drag, el, start: rectOf(el), proposal: null };
+  drag = { id: h.dataset.drag, el, start: rectOf(el), proposal: null, prevPointerEvents: el.style.pointerEvents || '' };
   el.classList.add('dragging');
+  el.style.pointerEvents = 'none';
   h.classList.add('dragging');
   e.preventDefault();
 });
 document.addEventListener('mousemove', e => {
   if (!drag) return;
   drag.proposal = null;
-  const hovered = document.elementFromPoint(e.clientX, e.clientY);
-  const targetEl = hovered ? hovered.closest('.widget') : null;
+  const stack = document.elementsFromPoint(e.clientX, e.clientY);
+  const targetEl = stack
+    .map(node => node.closest ? node.closest('.widget') : null)
+    .find(w => w && w.dataset.instance !== drag.id) || null;
   if (!targetEl || targetEl.dataset.instance === drag.id){
     hidePreviews();
     return;
@@ -340,6 +343,7 @@ document.addEventListener('mousemove', e => {
 document.addEventListener('mouseup', async () => {
   if (!drag) return;
   hidePreviews();
+  drag.el.style.pointerEvents = drag.prevPointerEvents;
   drag.el.classList.remove('dragging');
   const hdr = drag.el.querySelector('[data-drag]');
   if (hdr) hdr.classList.remove('dragging');
