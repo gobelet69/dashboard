@@ -161,24 +161,6 @@ function clamp(v, min, max){
 
 function compactLayout(items){
   const sorted = [...items].sort((a,b) => (a.r.row_start - b.r.row_start) || (a.r.col_start - b.r.col_start));
-  const rows = new Map();
-  for (const item of sorted){
-    const key = item.r.row_start + ':' + item.r.row_span;
-    if (!rows.has(key)) rows.set(key, []);
-    rows.get(key).push(item);
-  }
-  for (const line of rows.values()){
-    line.sort((a,b) => a.r.col_start - b.r.col_start);
-    let nextCol = 1;
-    for (const item of line){
-      item.r.col_start = nextCol;
-      nextCol += item.r.col_span;
-    }
-    if (line.length && nextCol !== COLS + 1){
-      const last = line[line.length - 1];
-      last.r.col_span = Math.max(3, COLS - last.r.col_start + 1);
-    }
-  }
   for (const cur of sorted){
     const maxColStart = COLS - cur.r.col_span + 1;
     cur.r.col_start = Math.max(1, Math.min(maxColStart, cur.r.col_start));
@@ -774,12 +756,12 @@ async function renderVault(env, username, configJson) {
   const folders = (list.delimitedPrefixes || []).map(p => {
     const name = p.slice(prefix.length).replace(/\/$/, '');
     return { name, key: p };
-  });
+  }).filter(f => f.name && !f.name.startsWith('.'));
   const files = (list.objects || []).map(o => ({
     name: o.key.slice(prefix.length),
     key: o.key,
     size: o.size,
-  })).filter(f => f.name);
+  })).filter(f => f.name && !f.name.startsWith('.'));
 
   const crumbs = [];
   crumbs.push(`<a href="#" data-navvault="">root</a>`);
