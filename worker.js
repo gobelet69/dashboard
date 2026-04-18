@@ -6,6 +6,7 @@ const DEFAULT_INSTANCES = [
 ];
 
 const VALID_TYPES = ['vault', 'todolist', 'habits', 'courses', 'blocus'];
+const VALID_PRESETS = ['balanced', 'focus', 'columns'];
 const GRID_COLS = 12;
 const MIN_COL_SPAN = 3;
 const MIN_ROW_SPAN = 2;
@@ -54,6 +55,8 @@ button:hover{background:var(--surface-hover)}
 .layout-slots{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .slot-btn{font-size:11px;padding:4px 8px}
 .slot-btn.save{color:var(--text-secondary)}
+.quick-presets{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.preset-btn{font-size:11px;padding:4px 8px}
 .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:0;grid-auto-rows:80px;position:relative}
 .widget{background:var(--surface);border:1px solid var(--border);border-radius:0;display:flex;flex-direction:column;overflow:hidden;position:relative;min-height:0}
 .widget.dragging{opacity:.55;z-index:12}
@@ -627,6 +630,17 @@ document.addEventListener('click', async e => {
   location.reload();
 });
 
+document.addEventListener('click', async e => {
+  const p = e.target.closest('[data-preset-layout]');
+  if (!p) return;
+  await fetch('/dashboard/api/layout/preset', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ preset: p.dataset.presetLayout })
+  });
+  location.reload();
+});
+
 // --- Widget-specific handlers (adapted to data-instance) ---
 
 document.addEventListener('click', async e => {
@@ -1113,6 +1127,11 @@ ${renderHeader(user)}
       <button class="slot-btn" data-slot-load="3">Slot 3 ${slots[3] ? '•' : ''}</button>
       <button class="slot-btn save" data-slot-save="3">Save</button>
     </div>
+    <div class="quick-presets">
+      <button class="preset-btn" data-preset-layout="balanced">Preset Balanced</button>
+      <button class="preset-btn" data-preset-layout="focus">Preset Focus</button>
+      <button class="preset-btn" data-preset-layout="columns">Preset Columns</button>
+    </div>
     <div class="add-widget">
       <button data-add-toggle>+ Add widget</button>
       <div class="add-widget-menu" id="addMenu">${addMenu}</div>
@@ -1171,6 +1190,51 @@ function findFirstGap(layout, desiredColSpan, desiredRowSpan) {
   }
 
   return { col_start: 1, col_span: desiredColSpan, row_start: maxBottom + 1, row_span: desiredRowSpan };
+}
+
+function presetFrames(preset) {
+  if (preset === 'focus') {
+    return [
+      { col_start: 1, col_span: 8, row_start: 1, row_span: 4 },
+      { col_start: 9, col_span: 4, row_start: 1, row_span: 2 },
+      { col_start: 9, col_span: 4, row_start: 3, row_span: 2 },
+      { col_start: 1, col_span: 6, row_start: 5, row_span: 3 },
+      { col_start: 7, col_span: 6, row_start: 5, row_span: 3 },
+    ];
+  }
+  if (preset === 'columns') {
+    return [
+      { col_start: 1, col_span: 4, row_start: 1, row_span: 3 },
+      { col_start: 5, col_span: 4, row_start: 1, row_span: 3 },
+      { col_start: 9, col_span: 4, row_start: 1, row_span: 3 },
+      { col_start: 1, col_span: 4, row_start: 4, row_span: 3 },
+      { col_start: 5, col_span: 4, row_start: 4, row_span: 3 },
+      { col_start: 9, col_span: 4, row_start: 4, row_span: 3 },
+    ];
+  }
+  return [
+    { col_start: 1, col_span: 6, row_start: 1, row_span: 3 },
+    { col_start: 7, col_span: 6, row_start: 1, row_span: 3 },
+    { col_start: 1, col_span: 6, row_start: 4, row_span: 3 },
+    { col_start: 7, col_span: 6, row_start: 4, row_span: 3 },
+  ];
+}
+
+function buildPresetUpdates(layout, preset) {
+  const open = layout.filter(w => w.open).sort((a, b) => (a.row_start - b.row_start) || (a.col_start - b.col_start));
+  const frames = presetFrames(preset);
+  const maxFrameBottom = frames.reduce((m, f) => Math.max(m, f.row_start + f.row_span), 1);
+  return open.map((w, i) => {
+    if (i < frames.length) return { instance_id: w.instance_id, ...frames[i] };
+    const n = i - frames.length;
+    return {
+      instance_id: w.instance_id,
+      col_start: (n % 2 === 0) ? 1 : 7,
+      col_span: 6,
+      row_start: maxFrameBottom + Math.floor(n / 2) * 3,
+      row_span: 3
+    };
+  });
 }
 
 async function ensureLayoutSlotsTable(env) {
@@ -1286,6 +1350,22 @@ export default {
           u.config == null ? null : (typeof u.config === 'string' ? u.config : JSON.stringify(u.config)),
           Date.now(), u.instance_id, user.username
         ).run();
+      }
+      return new Response('OK');
+    }
+
+    if (path === '/api/layout/preset' && req.method === 'POST') {
+      const body = await req.json();
+      const preset = body?.preset;
+      if (!VALID_PRESETS.includes(preset)) return new Response('bad preset', { status: 400 });
+      const layout = await loadLayout(env, user.username);
+      const updates = buildPresetUpdates(layout, preset);
+      for (const u of updates) {
+        await env.DASHBOARD_DB.prepare(
+          `UPDATE widget_layout
+           SET col_start = ?, col_span = ?, row_start = ?, row_span = ?, updated_at = ?
+           WHERE instance_id = ? AND username = ?`
+        ).bind(u.col_start, u.col_span, u.row_start, u.row_span, Date.now(), u.instance_id, user.username).run();
       }
       return new Response('OK');
     }
