@@ -20,13 +20,31 @@ const CSS = `
 :root{
   --bg:#0F1115;--surface:#1A1D24;--surface-hover:#20242C;--surface-soft:#151820;
   --text:#F1F5F9;--text-secondary:#94A3B8;--text-muted:#64748B;--border:#262A33;
-  --accent:#bb86fc;
+  --accent:#A855F7;--accent-pink:#EC4899;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min-height:100vh;padding:16px}
+body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min-height:100vh}
 a{color:var(--accent);text-decoration:none}
 button{font-family:inherit;cursor:pointer;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 10px}
 button:hover{background:var(--surface-hover)}
+.hub-header{display:flex;justify-content:space-between;align-items:center;height:64px;padding:0 24px;background:var(--surface);border-bottom:1px solid var(--border);box-shadow:0 1px 3px rgba(0,0,0,.25);position:sticky;top:0;z-index:50}
+.user-wrap{position:relative}
+.user-btn{display:flex;align-items:center;gap:8px;color:var(--text);font-size:.84rem;font-weight:500;padding:6px 12px 6px 10px;border-radius:8px;background:transparent;border:1px solid var(--border);cursor:pointer;transition:all .15s ease-out}
+.user-btn:hover{background:var(--surface-hover)}
+.caret{color:var(--text-muted);transition:transform .15s ease-out;margin-left:2px}
+.user-wrap.open .caret{transform:rotate(180deg)}
+.dd{display:none;position:absolute;right:0;top:calc(100% + 8px);background:var(--surface);border:1px solid var(--border);border-radius:12px;min-width:240px;box-shadow:0 16px 48px rgba(0,0,0,.4);z-index:999;overflow:hidden}
+.user-wrap.open .dd{display:block;animation:dd 150ms ease-out}
+@keyframes dd{from{opacity:0;transform:translateY(-4px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+.dd-hdr{padding:14px 16px 12px;border-bottom:1px solid var(--border)}
+.dd-name{font-weight:700;font-size:.92rem;margin-bottom:7px}
+.dd-sub{font-size:.76rem;color:var(--text-muted)}
+.ddl{display:flex;align-items:center;gap:10px;padding:10px 16px;color:var(--text);text-decoration:none;font-size:.86rem;font-weight:500;transition:background .15s ease-out}
+.ddl:hover{background:rgba(168,85,247,.1);color:var(--text)}
+.dd-sep{height:1px;background:var(--border);margin:4px 0}
+.ddl.out{color:#F43F5E!important}
+.ddl.out:hover{background:rgba(244,63,94,.12)!important;color:#F43F5E}
+.page{padding:16px}
 .topbar{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
 .topbar h1{font-size:16px;font-weight:600;color:var(--text-secondary)}
 .closed-chips{display:flex;gap:6px}
@@ -419,6 +437,53 @@ async function renderCourses(env, username) {
   }).join('');
 }
 
+function renderHeader(user) {
+  const userId = 'dUW';
+  const appsId = 'dApps';
+  return `<header class="hub-header">
+  <a href="/" style="text-decoration:none;display:flex;align-items:center;gap:10px;flex-shrink:0">
+    <span style="width:36px;height:36px;background:linear-gradient(135deg,#A855F7,#EC4899);border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.05em;color:#fff;text-shadow:0 0 12px rgba(255,255,255,.7),0 0 4px rgba(255,255,255,.95);flex-shrink:0;box-shadow:0 2px 8px rgba(168,85,247,.35),0 0 20px rgba(168,85,247,.45)">111</span>
+    <div style="display:flex;flex-direction:column;line-height:1.25">
+      <span style="font-weight:700;font-size:1.1em;color:#fff;letter-spacing:-.02em">111<span style="color:#A855F7;text-shadow:0 0 20px rgba(168,85,247,.5)">iridescence</span></span>
+      <span style="font-size:.72em;color:#94a3b8;font-weight:500;letter-spacing:.03em">Dashboard</span>
+    </div>
+  </a>
+  <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
+    <div class="user-wrap" id="${userId}">
+      <button class="user-btn" onclick="document.getElementById('${userId}').classList.toggle('open')">
+        ${esc(user.username)}<svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="dd">
+        <div class="dd-hdr">
+          <div class="dd-name">${esc(user.username)}</div>
+          <div class="dd-sub">Dashboard</div>
+        </div>
+        <a href="/auth/account" class="ddl">Account Preferences</a>
+        <a href="/auth/admin" class="ddl">Admin Panel</a>
+        <div class="dd-sep"></div>
+        <a href="/auth/logout" class="ddl out">Sign Out</a>
+      </div>
+    </div>
+    <div class="user-wrap" id="${appsId}">
+      <button class="user-btn" onclick="document.getElementById('${appsId}').classList.toggle('open')">
+        Apps<svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="dd">
+        <a href="/" class="ddl">🏠 Hub</a>
+        <a href="/vault" class="ddl">🔒 Vault</a>
+        <a href="/habits" class="ddl">📈 Habits</a>
+        <a href="/todo" class="ddl">✅ Todo</a>
+        <a href="/courses" class="ddl">🎓 Courses</a>
+        <a href="/editor" class="ddl">📝 Editor</a>
+        <a href="/dashboard" class="ddl">📊 Dashboard</a>
+        <a href="/feed" class="ddl">📰 Feed</a>
+      </div>
+    </div>
+  </div>
+  <script>document.addEventListener('click',e=>{const w=document.getElementById('${userId}');const a=document.getElementById('${appsId}');if(w&&!w.contains(e.target))w.classList.remove('open');if(a&&!a.contains(e.target))a.classList.remove('open')});<\/script>
+</header>`;
+}
+
 function renderPage(user, layout, widgetBodies) {
   const open = layout.filter(w => w.open);
   const closed = layout.filter(w => !w.open);
@@ -444,11 +509,14 @@ function renderPage(user, layout, widgetBodies) {
 <title>Dashboard — 111iridescence</title>
 <style>${CSS}</style>
 </head><body>
-<div class="topbar">
-  <h1>Dashboard · ${esc(user.username)}</h1>
-  <div class="closed-chips">${chips}</div>
+${renderHeader(user)}
+<div class="page">
+  <div class="topbar">
+    <h1>Dashboard · ${esc(user.username)}</h1>
+    <div class="closed-chips">${chips}</div>
+  </div>
+  <div class="grid" id="grid">${widgets}</div>
 </div>
-<div class="grid" id="grid">${widgets}</div>
 <script>${CLIENT_JS}</script>
 </body></html>`;
 }
