@@ -6,6 +6,9 @@ const DEFAULT_INSTANCES = [
 ];
 
 const VALID_TYPES = ['vault', 'todolist', 'habits', 'courses', 'blocus'];
+const GRID_COLS = 12;
+const MIN_COL_SPAN = 3;
+const MIN_ROW_SPAN = 2;
 
 const WIDGET_TITLES = { vault: '🗄️ Vault', todolist: '📋 Todolist', habits: '📈 Habits', courses: '🎓 Courses', blocus: '📅 Blocus' };
 
@@ -1146,6 +1149,30 @@ async function loadLayout(env, username) {
   return seeded;
 }
 
+function overlapsRect(a, b) {
+  return !(a.col_start + a.col_span <= b.col_start || b.col_start + b.col_span <= a.col_start ||
+           a.row_start + a.row_span <= b.row_start || b.row_start + b.row_span <= a.row_start);
+}
+
+function findFirstGap(layout, desiredColSpan, desiredRowSpan) {
+  const open = layout.filter(w => w.open);
+  const maxBottom = open.reduce((m, w) => Math.max(m, w.row_start + w.row_span - 1), 1);
+  const searchBottom = maxBottom + 24;
+
+  for (let rowSpan = desiredRowSpan; rowSpan >= MIN_ROW_SPAN; rowSpan--) {
+    for (let colSpan = desiredColSpan; colSpan >= MIN_COL_SPAN; colSpan--) {
+      for (let row = 1; row <= searchBottom; row++) {
+        for (let col = 1; col <= GRID_COLS - colSpan + 1; col++) {
+          const candidate = { col_start: col, col_span: colSpan, row_start: row, row_span: rowSpan };
+          if (!open.some(w => overlapsRect(candidate, w))) return candidate;
+        }
+      }
+    }
+  }
+
+  return { col_start: 1, col_span: desiredColSpan, row_start: maxBottom + 1, row_span: desiredRowSpan };
+}
+
 async function ensureLayoutSlotsTable(env) {
   await env.DASHBOARD_DB.prepare(
     `CREATE TABLE IF NOT EXISTS layout_slots (
@@ -1327,10 +1354,6 @@ export default {
       const body = await req.json();
       const { widget_type } = body;
       if (!VALID_TYPES.includes(widget_type)) return new Response('bad type', { status: 400 });
-      const row = await env.DASHBOARD_DB.prepare(
-        'SELECT MAX(row_start + row_span) AS maxrow FROM widget_layout WHERE username = ?'
-      ).bind(user.username).first();
-      const maxrow = (row?.maxrow) || 1;
       const defaults = {
         vault:    { col_span: 6, row_span: 3, config: '{"path":""}' },
         todolist: { col_span: 6, row_span: 3, config: '{"board_id":null}' },
@@ -1338,10 +1361,12 @@ export default {
         courses:  { col_span: 5, row_span: 2, config: '{}' },
         blocus:   { col_span: 8, row_span: 3, config: '{"board_id":null,"view":"week"}' },
       }[widget_type];
+      const layout = await loadLayout(env, user.username);
+      const spot = findFirstGap(layout, defaults.col_span, defaults.row_span);
       const id = crypto.randomUUID();
       await env.DASHBOARD_DB.prepare(
-        'INSERT INTO widget_layout (instance_id, username, widget_type, col_start, col_span, row_start, row_span, open, config, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, 1, ?, ?)'
-      ).bind(id, user.username, widget_type, defaults.col_span, maxrow, defaults.row_span, defaults.config, Date.now()).run();
+        'INSERT INTO widget_layout (instance_id, username, widget_type, col_start, col_span, row_start, row_span, open, config, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)'
+      ).bind(id, user.username, widget_type, spot.col_start, spot.col_span, spot.row_start, spot.row_span, defaults.config, Date.now()).run();
       return new Response(JSON.stringify({ instance_id: id }), { headers: { 'Content-Type': 'application/json' } });
     }
 
