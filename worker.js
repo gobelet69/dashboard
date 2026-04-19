@@ -52,9 +52,14 @@ button:hover{background:var(--surface-hover)}
 .ddl.out:hover{background:rgba(244,63,94,.12)!important;color:#F43F5E}
 .page{padding:16px}
 .topbar{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
-.layout-slots{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.slot-btn{font-size:11px;padding:4px 8px}
+.layout-slots{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.slot-group{display:flex;align-items:center;gap:2px}
+.slot-btn{font-size:11px;padding:4px 8px;transition:background .15s,box-shadow .25s}
+.slot-btn:disabled{opacity:.5;cursor:not-allowed}
 .slot-btn.save{color:var(--text-secondary)}
+.slot-btn.del{color:var(--text-muted);padding:4px 6px}
+.slot-btn.del:hover{color:#f43f5e}
+.slot-btn.slot-saved{background:var(--accent);color:#fff;box-shadow:0 0 0 3px rgba(168,85,247,.25)}
 .quick-presets{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .preset-btn{font-size:11px;padding:4px 8px}
 .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:0;grid-auto-rows:80px;position:relative}
@@ -63,9 +68,14 @@ button:hover{background:var(--surface-hover)}
 .widget-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-soft);font-size:13px;font-weight:600;cursor:grab}
 .widget-header.dragging{cursor:grabbing}
 .widget-header .title{display:flex;gap:8px;align-items:center}
-.widget-header .close{background:transparent;border:none;color:var(--text-muted);font-size:16px;line-height:1;padding:2px 6px;cursor:pointer}
-.widget-header .close:hover{color:var(--text)}
+.widget-header .hdr-actions{display:flex;align-items:center;gap:2px}
+.widget-header .close,.widget-header .collapse{background:transparent;border:none;color:var(--text-muted);font-size:16px;line-height:1;padding:2px 6px;cursor:pointer}
+.widget-header .close:hover,.widget-header .collapse:hover{color:var(--text)}
 .widget-body{flex:1;overflow:auto;padding:12px;font-size:13px}
+.widget.collapsed .widget-body{display:none}
+.widget.collapsed{min-height:0}
+.widget-error{color:#f43f5e;font-size:12px}
+.cardtitle-edit{font-size:12px;padding:2px 4px;width:auto}
 .drop-preview{border:2px dashed rgba(168,85,247,.95);background:rgba(168,85,247,.18);z-index:18;pointer-events:none}
 .drop-preview.target{border-color:rgba(236,72,153,.9);background:rgba(236,72,153,.12)}
 .resize-handle{position:absolute;z-index:5}
@@ -135,10 +145,29 @@ input[type=text]{background:var(--surface-soft);border:1px solid var(--border);c
 `;
 
 const CLIENT_JS = `
-const grid = document.getElementById('grid');
+let grid = document.getElementById('grid');
 const COLS = 12;
 const MIN_COL = 3;
 const MIN_ROW = 2;
+
+async function refreshPage(){
+  const r = await fetch('/dashboard', { headers: { Accept: 'text/html' }, cache: 'no-store' });
+  if (!r.ok) return;
+  const html = await r.text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const newGrid = doc.getElementById('grid');
+  const newTopbar = doc.querySelector('.topbar');
+  const curGrid = document.getElementById('grid');
+  const curTopbar = document.querySelector('.topbar');
+  if (newGrid && curGrid) curGrid.replaceWith(newGrid);
+  if (newTopbar && curTopbar) curTopbar.replaceWith(newTopbar);
+  grid = document.getElementById('grid');
+}
+
+function flash(el, cls = 'flash'){
+  el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), 600);
+}
 
 function rectOf(el){
   const s = el.style;
@@ -605,7 +634,7 @@ document.addEventListener('click', async e => {
     await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ instance_id: id, ...closedRect, open: 0 })
     });
-    location.reload();
+    await refreshPage();
     return;
   }
   const r = e.target.closest('[data-reopen]');
@@ -616,7 +645,7 @@ document.addEventListener('click', async e => {
     await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ instance_id: r.dataset.reopen, col_start: 1, col_span: 6, row_start: maxRow, row_span: 3, open: 1 })
     });
-    location.reload();
+    await refreshPage();
   }
 });
 
@@ -636,27 +665,45 @@ document.addEventListener('click', async e => {
   await fetch('/dashboard/api/widget/create', { method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ widget_type: b.dataset.addType })
   });
-  location.reload();
+  document.getElementById('addMenu')?.classList.remove('show');
+  await refreshPage();
 });
 
 document.addEventListener('click', async e => {
   const save = e.target.closest('[data-slot-save]');
   if (save){
-    await fetch('/dashboard/api/layout-slot/save', {
+    save.disabled = true;
+    const r = await fetch('/dashboard/api/layout-slot/save', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ slot: Number(save.dataset.slotSave) })
     });
+    save.disabled = false;
+    if (r.ok){
+      flash(save, 'slot-saved');
+      await refreshPage();
+    }
+    return;
+  }
+  const del = e.target.closest('[data-slot-delete]');
+  if (del){
+    if (!confirm('Clear this slot?')) return;
+    await fetch('/dashboard/api/layout-slot/delete', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ slot: Number(del.dataset.slotDelete) })
+    });
+    await refreshPage();
     return;
   }
   const load = e.target.closest('[data-slot-load]');
   if (!load) return;
-  await fetch('/dashboard/api/layout-slot/load', {
+  const r = await fetch('/dashboard/api/layout-slot/load', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ slot: Number(load.dataset.slotLoad) })
   });
-  location.reload();
+  if (r.ok) await refreshPage();
 });
 
 document.addEventListener('click', async e => {
@@ -667,7 +714,7 @@ document.addEventListener('click', async e => {
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ preset: p.dataset.presetLayout })
   });
-  location.reload();
+  await refreshPage();
 });
 
 // --- Widget-specific handlers (adapted to data-instance) ---
@@ -717,6 +764,53 @@ document.addEventListener('click', async e => {
   const fd = new FormData(); fd.set('id', d.dataset.delcard);
   await fetch('/dashboard/api/todo/card/delete', { method:'POST', body: fd });
   d.closest('.kanban-card').remove();
+});
+
+// Card inline edit: double-click title to edit
+document.addEventListener('dblclick', e => {
+  const t = e.target.closest('[data-cardtitle]');
+  if (!t || t.querySelector('input')) return;
+  const card = t.closest('.kanban-card');
+  const id = card.dataset.card;
+  const prev = t.textContent;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = prev;
+  input.className = 'cardtitle-edit';
+  t.textContent = '';
+  t.appendChild(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const commit = async () => {
+    if (done) return;
+    done = true;
+    const val = input.value.trim();
+    if (!val || val === prev){ t.textContent = prev; return; }
+    const fd = new FormData();
+    fd.set('id', id); fd.set('title', val);
+    const r = await fetch('/dashboard/api/todo/card/update', { method:'POST', body: fd });
+    t.textContent = r.ok ? val : prev;
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter'){ ev.preventDefault(); input.blur(); }
+    else if (ev.key === 'Escape'){ done = true; t.textContent = prev; }
+  });
+});
+
+// Widget collapse toggle
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-collapse]');
+  if (!b) return;
+  e.preventDefault();
+  const widget = b.closest('.widget');
+  const collapsed = !widget.classList.contains('collapsed');
+  widget.classList.toggle('collapsed', collapsed);
+  b.textContent = collapsed ? '+' : '−';
+  await fetch('/dashboard/api/widget/collapse', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ instance_id: widget.dataset.instance, collapsed: collapsed ? 1 : 0 })
+  });
 });
 
 let draggingCard = null;
@@ -778,7 +872,7 @@ document.addEventListener('click', async e => {
   await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ instance_id: widget.dataset.instance, ...rectOf(widget), open:1, config: JSON.stringify({ board_id: currentBoard, view: b.dataset.blocusView }) })
   });
-  location.reload();
+  await refreshPage();
 });
 document.addEventListener('change', async e => {
   const s = e.target.closest('[data-blocus-board]');
@@ -789,7 +883,7 @@ document.addEventListener('change', async e => {
   await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ instance_id: widget.dataset.instance, ...rectOf(widget), open:1, config: JSON.stringify({ board_id: s.value, view }) })
   });
-  location.reload();
+  await refreshPage();
 });
 `;
 
@@ -862,7 +956,7 @@ async function renderTodo(env, username, configJson) {
       <div class="kanban-cards">
         ${listCards.map(c => `
           <div class="kanban-card" draggable="true" data-card="${esc(c.id)}" data-pos="${c.position}">
-            <span>${esc(c.title)}</span>
+            <span data-cardtitle title="Double-click to edit">${esc(c.title)}</span>
             <button class="delcard" data-delcard="${esc(c.id)}" title="Delete">×</button>
           </div>`).join('')}
       </div>
@@ -1054,12 +1148,16 @@ async function renderBlocus(env, username, configJson) {
 }
 
 async function renderWidget(env, username, w) {
-  if (w.widget_type === 'vault')    return await renderVault(env, username, w.config);
-  if (w.widget_type === 'todolist') return await renderTodo(env, username, w.config);
-  if (w.widget_type === 'habits')   return await renderHabits(env, username);
-  if (w.widget_type === 'courses')  return await renderCourses(env, username);
-  if (w.widget_type === 'blocus')   return await renderBlocus(env, username, w.config);
-  return '<div class="muted">unknown widget</div>';
+  try {
+    if (w.widget_type === 'vault')    return await renderVault(env, username, w.config);
+    if (w.widget_type === 'todolist') return await renderTodo(env, username, w.config);
+    if (w.widget_type === 'habits')   return await renderHabits(env, username);
+    if (w.widget_type === 'courses')  return await renderCourses(env, username);
+    if (w.widget_type === 'blocus')   return await renderBlocus(env, username, w.config);
+    return '<div class="muted">unknown widget</div>';
+  } catch (err) {
+    return `<div class="widget-error">Failed to load: ${esc(err.message || 'unknown error')}</div>`;
+  }
 }
 
 function renderHeader(user) {
@@ -1128,11 +1226,15 @@ function renderPage(user, layout, bodies, slots = {}) {
     const label = labelFor(w);
     const handles = ['n','s','e','w','nw','ne','sw','se']
       .map(d => `<div class="resize-handle ${d}" data-resize="${esc(w.instance_id)}" data-dir="${d}"></div>`).join('');
+    const collapsed = !!w.collapsed;
     return `
-    <section class="widget" data-instance="${esc(w.instance_id)}" data-type="${esc(w.widget_type)}" style="${widgetStyle(w)}">
+    <section class="widget${collapsed ? ' collapsed' : ''}" data-instance="${esc(w.instance_id)}" data-type="${esc(w.widget_type)}" style="${widgetStyle(w)}">
       <div class="widget-header" data-drag="${esc(w.instance_id)}">
         <div class="title">${label}</div>
-        <button class="close" data-close="${esc(w.instance_id)}" title="Close">×</button>
+        <div class="hdr-actions">
+          <button class="collapse" data-collapse="${esc(w.instance_id)}" title="${collapsed ? 'Expand' : 'Collapse'}">${collapsed ? '+' : '−'}</button>
+          <button class="close" data-close="${esc(w.instance_id)}" title="Close">×</button>
+        </div>
       </div>
       <div class="widget-body" data-body="${esc(w.instance_id)}">${bodies[w.instance_id] || ''}</div>
       ${handles}
@@ -1149,12 +1251,13 @@ ${renderHeader(user)}
 <div class="page">
   <div class="topbar">
     <div class="layout-slots">
-      <button class="slot-btn" data-slot-load="1">Slot 1 ${slots[1] ? '•' : ''}</button>
-      <button class="slot-btn save" data-slot-save="1">Save</button>
-      <button class="slot-btn" data-slot-load="2">Slot 2 ${slots[2] ? '•' : ''}</button>
-      <button class="slot-btn save" data-slot-save="2">Save</button>
-      <button class="slot-btn" data-slot-load="3">Slot 3 ${slots[3] ? '•' : ''}</button>
-      <button class="slot-btn save" data-slot-save="3">Save</button>
+      ${[1,2,3].map(i => `
+        <div class="slot-group">
+          <button class="slot-btn" data-slot-load="${i}" ${!slots[i] ? 'disabled title="empty"' : ''}>Slot ${i}${slots[i] ? ' •' : ''}</button>
+          <button class="slot-btn save" data-slot-save="${i}" title="Save current layout to slot ${i}">Save</button>
+          ${slots[i] ? `<button class="slot-btn del" data-slot-delete="${i}" title="Clear slot ${i}">×</button>` : ''}
+        </div>
+      `).join('')}
     </div>
     <div class="quick-presets">
       <button class="preset-btn" data-preset-layout="balanced">Preset Balanced</button>
@@ -1180,7 +1283,17 @@ async function getUser(req, env) {
     .bind(sess, Date.now()).first();
 }
 
+let collapsedColumnReady = false;
+async function ensureCollapsedColumn(env) {
+  if (collapsedColumnReady) return;
+  try {
+    await env.DASHBOARD_DB.prepare('ALTER TABLE widget_layout ADD COLUMN collapsed INTEGER NOT NULL DEFAULT 0').run();
+  } catch {} // column already exists
+  collapsedColumnReady = true;
+}
+
 async function loadLayout(env, username) {
+  await ensureCollapsedColumn(env);
   const { results } = await env.DASHBOARD_DB.prepare(
     'SELECT * FROM widget_layout WHERE username = ? ORDER BY row_start, col_start'
   ).bind(username).all();
@@ -1329,9 +1442,10 @@ export default {
       const cid = fd.get('cardId'), nlid = fd.get('newListId'), npos = parseInt(fd.get('newPosition'));
       const card = await env.TODO_DB.prepare('SELECT * FROM cards WHERE id = ? AND username = ?').bind(cid, user.username).first();
       if (!card) return new Response('no card', { status: 404 });
-      const list = await env.TODO_DB.prepare('SELECT board_id FROM lists WHERE id = ?').bind(nlid).first();
-      await env.TODO_DB.prepare('UPDATE cards SET position = position + 1 WHERE list_id = ? AND position >= ?').bind(nlid, npos).run();
-      await env.TODO_DB.prepare('UPDATE cards SET list_id = ?, board_id = ?, position = ? WHERE id = ?').bind(nlid, list.board_id, npos, cid).run();
+      const list = await env.TODO_DB.prepare('SELECT board_id FROM lists WHERE id = ? AND username = ?').bind(nlid, user.username).first();
+      if (!list) return new Response('no list', { status: 404 });
+      await env.TODO_DB.prepare('UPDATE cards SET position = position + 1 WHERE list_id = ? AND position >= ? AND username = ?').bind(nlid, npos, user.username).run();
+      await env.TODO_DB.prepare('UPDATE cards SET list_id = ?, board_id = ?, position = ? WHERE id = ? AND username = ?').bind(nlid, list.board_id, npos, cid, user.username).run();
       return new Response('OK');
     }
 
@@ -1351,12 +1465,14 @@ export default {
     if (path === '/api/habits/toggle' && req.method === 'POST') {
       const fd = await req.formData();
       const hid = fd.get('habitId'), date = fd.get('date');
+      const habit = await env.HABITS_DB.prepare('SELECT id FROM habits WHERE id = ? AND username = ?').bind(hid, user.username).first();
+      if (!habit) return new Response('no habit', { status: 404 });
       const existing = await env.HABITS_DB.prepare(
         'SELECT * FROM habit_logs WHERE habit_id = ? AND date = ? AND username = ?'
       ).bind(hid, date, user.username).first();
       if (existing) {
-        await env.HABITS_DB.prepare('UPDATE habit_logs SET completed = ? WHERE id = ?')
-          .bind(existing.completed ? 0 : 1, existing.id).run();
+        await env.HABITS_DB.prepare('UPDATE habit_logs SET completed = ? WHERE id = ? AND username = ?')
+          .bind(existing.completed ? 0 : 1, existing.id, user.username).run();
       } else {
         await env.HABITS_DB.prepare(
           'INSERT INTO habit_logs (id, habit_id, username, date, completed) VALUES (?, ?, ?, ?, 1)'
@@ -1368,15 +1484,18 @@ export default {
     if (path === '/api/layout' && req.method === 'POST') {
       const body = await req.json();
       const updates = Array.isArray(body) ? body : [body];
+      await ensureCollapsedColumn(env);
       for (const u of updates) {
         if (!u.instance_id) continue;
         await env.DASHBOARD_DB.prepare(
           `UPDATE widget_layout
-           SET col_start = ?, col_span = ?, row_start = ?, row_span = ?, open = ?, config = COALESCE(?, config), updated_at = ?
+           SET col_start = ?, col_span = ?, row_start = ?, row_span = ?, open = ?,
+               config = COALESCE(?, config), collapsed = COALESCE(?, collapsed), updated_at = ?
            WHERE instance_id = ? AND username = ?`
         ).bind(
           u.col_start|0, u.col_span|0, u.row_start|0, u.row_span|0, u.open ? 1 : 0,
           u.config == null ? null : (typeof u.config === 'string' ? u.config : JSON.stringify(u.config)),
+          u.collapsed == null ? null : (u.collapsed ? 1 : 0),
           Date.now(), u.instance_id, user.username
         ).run();
       }
@@ -1483,6 +1602,38 @@ export default {
       const body = await req.json();
       await env.DASHBOARD_DB.prepare('DELETE FROM widget_layout WHERE instance_id = ? AND username = ?')
         .bind(body.instance_id, user.username).run();
+      return new Response('OK');
+    }
+
+    if (path === '/api/widget/collapse' && req.method === 'POST') {
+      const body = await req.json();
+      if (!body.instance_id) return new Response('bad id', { status: 400 });
+      await ensureCollapsedColumn(env);
+      await env.DASHBOARD_DB.prepare(
+        'UPDATE widget_layout SET collapsed = ?, updated_at = ? WHERE instance_id = ? AND username = ?'
+      ).bind(body.collapsed ? 1 : 0, Date.now(), body.instance_id, user.username).run();
+      return new Response('OK');
+    }
+
+    if (path === '/api/todo/card/update' && req.method === 'POST') {
+      const form = await req.formData();
+      const id = form.get('id');
+      const title = (form.get('title') || '').toString().trim();
+      if (!id || !title) return new Response('bad input', { status: 400 });
+      await env.TODO_DB.prepare(
+        'UPDATE cards SET title = ? WHERE id = ? AND username = ?'
+      ).bind(title, id, user.username).run();
+      return new Response('OK');
+    }
+
+    if (path === '/api/layout-slot/delete' && req.method === 'POST') {
+      const body = await req.json();
+      const slot = Number(body.slot);
+      if (![1, 2, 3].includes(slot)) return new Response('bad slot', { status: 400 });
+      await ensureLayoutSlotsTable(env);
+      await env.DASHBOARD_DB.prepare(
+        'DELETE FROM layout_slots WHERE username = ? AND slot_index = ?'
+      ).bind(user.username, slot).run();
       return new Response('OK');
     }
 
