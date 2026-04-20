@@ -63,11 +63,15 @@ button:hover{background:var(--surface-hover)}
 .quick-presets{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .preset-btn{font-size:11px;padding:4px 8px}
 .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:0;grid-auto-rows:80px;position:relative}
-.widget{background:var(--surface);border:1px solid var(--border);border-radius:0;display:flex;flex-direction:column;overflow:hidden;position:relative;min-height:0}
-.widget.dragging{opacity:.55;z-index:12}
-.widget-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-soft);font-size:13px;font-weight:600;cursor:grab}
+.widget{background:var(--surface);border:1px solid var(--border);border-radius:0;display:flex;flex-direction:column;overflow:hidden;position:relative;min-height:0;transition:box-shadow .15s ease,border-color .15s ease}
+.widget:hover{border-color:var(--accent);box-shadow:0 4px 18px rgba(0,0,0,.35)}
+.widget.dragging{opacity:.55;z-index:12;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.widget-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-soft);font-size:13px;font-weight:600;cursor:grab;user-select:none}
 .widget-header.dragging{cursor:grabbing}
 .widget-header .title{display:flex;gap:8px;align-items:center}
+.widget-header .grip{color:var(--text-muted);font-size:14px;line-height:1;letter-spacing:-1px;cursor:grab;opacity:.55;transition:opacity .15s ease}
+.widget-header:hover .grip{opacity:1}
+.widget-header.dragging .grip{cursor:grabbing}
 .widget-header .hdr-actions{display:flex;align-items:center;gap:2px}
 .widget-header .close,.widget-header .collapse{background:transparent;border:none;color:var(--text-muted);font-size:16px;line-height:1;padding:2px 6px;cursor:pointer}
 .widget-header .close:hover,.widget-header .collapse:hover{color:var(--text)}
@@ -76,8 +80,10 @@ button:hover{background:var(--surface-hover)}
 .widget.collapsed{min-height:0}
 .widget-error{color:#f43f5e;font-size:12px}
 .cardtitle-edit{font-size:12px;padding:2px 4px;width:auto}
-.drop-preview{border:2px dashed rgba(168,85,247,.95);background:rgba(168,85,247,.18);z-index:18;pointer-events:none}
-.drop-preview.target{border-color:rgba(236,72,153,.9);background:rgba(236,72,153,.12)}
+.drop-preview{border:2px dashed rgba(168,85,247,.95);background:rgba(168,85,247,.18);z-index:18;pointer-events:none;border-radius:4px;box-shadow:0 0 0 1px rgba(168,85,247,.25) inset;transition:left .08s ease,top .08s ease,width .08s ease,height .08s ease}
+.drop-preview.target{border-color:rgba(236,72,153,.9);background:rgba(236,72,153,.14);animation:dropPulse 1.1s ease-in-out infinite}
+@keyframes dropPulse{0%,100%{box-shadow:0 0 0 1px rgba(236,72,153,.3) inset}50%{box-shadow:0 0 0 3px rgba(236,72,153,.5) inset}}
+body.is-dragging .grid{background-image:linear-gradient(to right,rgba(168,85,247,.07) 1px,transparent 1px);background-size:calc(100%/12) 100%}
 .resize-handle{position:absolute;z-index:5}
 .resize-handle.n{top:-3px;left:6px;right:6px;height:6px;cursor:n-resize}
 .resize-handle.s{bottom:-3px;left:6px;right:6px;height:6px;cursor:s-resize}
@@ -416,6 +422,7 @@ document.addEventListener('mousedown', e => {
   el.classList.add('dragging');
   el.style.pointerEvents = 'none';
   h.classList.add('dragging');
+  document.body.classList.add('is-dragging');
   e.preventDefault();
 });
 document.addEventListener('mousemove', e => {
@@ -460,6 +467,7 @@ document.addEventListener('mouseup', async () => {
   hidePreviews();
   drag.el.style.pointerEvents = drag.prevPointerEvents;
   drag.el.classList.remove('dragging');
+  document.body.classList.remove('is-dragging');
   const hdr = drag.el.querySelector('[data-drag]');
   if (hdr) hdr.classList.remove('dragging');
   if (drag.proposal){
@@ -1230,7 +1238,7 @@ function renderPage(user, layout, bodies, slots = {}) {
     return `
     <section class="widget${collapsed ? ' collapsed' : ''}" data-instance="${esc(w.instance_id)}" data-type="${esc(w.widget_type)}" style="${widgetStyle(w)}">
       <div class="widget-header" data-drag="${esc(w.instance_id)}">
-        <div class="title">${label}</div>
+        <div class="title"><span class="grip" aria-hidden="true">⋮⋮</span>${label}</div>
         <div class="hdr-actions">
           <button class="collapse" data-collapse="${esc(w.instance_id)}" title="${collapsed ? 'Expand' : 'Collapse'}">${collapsed ? '+' : '−'}</button>
           <button class="close" data-close="${esc(w.instance_id)}" title="Close">×</button>
