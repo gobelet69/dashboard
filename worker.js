@@ -185,6 +185,30 @@ function setRect(el, r){
   el.style.gridColumn = r.col_start + ' / span ' + r.col_span;
   el.style.gridRow = r.row_start + ' / span ' + r.row_span;
 }
+// FLIP: animate the mutation done by fn() by capturing rects before/after and tweening transforms.
+function animateLayout(fn){
+  const nodes = [...document.querySelectorAll('.widget')];
+  const before = new Map(nodes.map(n => [n, n.getBoundingClientRect()]));
+  fn();
+  requestAnimationFrame(() => {
+    for (const n of nodes){
+      const b = before.get(n); if (!b) continue;
+      const a = n.getBoundingClientRect();
+      const dx = b.left - a.left, dy = b.top - a.top;
+      const sx = b.width && a.width ? b.width / a.width : 1;
+      const sy = b.height && a.height ? b.height / a.height : 1;
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) continue;
+      n.style.transition = 'none';
+      n.style.transformOrigin = 'top left';
+      n.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(' + sx + ',' + sy + ')';
+      requestAnimationFrame(() => {
+        n.style.transition = 'transform .22s cubic-bezier(.2,.8,.2,1)';
+        n.style.transform = '';
+        setTimeout(() => { n.style.transition = ''; n.style.transform = ''; n.style.transformOrigin = ''; }, 260);
+      });
+    }
+  });
+}
 function overlaps(a, b){
   return !(a.col_start + a.col_span <= b.col_start || b.col_start + b.col_span <= a.col_start ||
            a.row_start + a.row_span <= b.row_start || b.row_start + b.row_span <= a.row_start);
@@ -475,11 +499,14 @@ document.addEventListener('mouseup', async () => {
     const moving = items.find(i => i.id === drag.id);
     const target = items.find(i => i.id === drag.proposal.targetId);
     if (moving && target){
-      moving.r = drag.proposal.dragRect;
-      target.r = drag.proposal.targetRect;
-      setRect(moving.el, moving.r);
-      setRect(target.el, target.r);
-      const compacted = compactLayout(items);
+      let compacted;
+      animateLayout(() => {
+        moving.r = drag.proposal.dragRect;
+        target.r = drag.proposal.targetRect;
+        setRect(moving.el, moving.r);
+        setRect(target.el, target.r);
+        compacted = compactLayout(items);
+      });
       await saveAll(compacted);
     }
   }
@@ -623,7 +650,8 @@ document.addEventListener('mousemove', e => {
 });
 document.addEventListener('mouseup', async () => {
   if (!resize) return;
-  const items = compactLayout(allWidgets());
+  let items;
+  animateLayout(() => { items = compactLayout(allWidgets()); });
   await saveAll(items);
   resize = null;
 });
@@ -637,7 +665,8 @@ document.addEventListener('click', async e => {
     const id = c.dataset.close;
     const closedRect = rectOf(widget);
     widget.remove();
-    const items = compactLayout(allWidgets());
+    let items;
+    animateLayout(() => { items = compactLayout(allWidgets()); });
     await saveAll(items);
     await fetch('/dashboard/api/layout', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ instance_id: id, ...closedRect, open: 0 })
