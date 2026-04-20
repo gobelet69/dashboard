@@ -85,7 +85,7 @@ button:hover{background:var(--surface-hover)}
 .drop-preview{border:2px dashed rgba(168,85,247,.95);background:rgba(168,85,247,.18);z-index:18;pointer-events:none;border-radius:4px;box-shadow:0 0 0 1px rgba(168,85,247,.25) inset;transition:left .08s ease,top .08s ease,width .08s ease,height .08s ease}
 .drop-preview.target{border-color:rgba(236,72,153,.9);background:rgba(236,72,153,.14);animation:dropPulse 1.1s ease-in-out infinite}
 @keyframes dropPulse{0%,100%{box-shadow:0 0 0 1px rgba(236,72,153,.3) inset}50%{box-shadow:0 0 0 3px rgba(236,72,153,.5) inset}}
-body.is-dragging .grid{background-image:linear-gradient(to right,rgba(168,85,247,.07) 1px,transparent 1px);background-size:calc(100%/12) 100%}
+body.is-dragging .grid{background-image:linear-gradient(to right,rgba(168,85,247,.07) 1px,transparent 1px);background-size:calc(100%/12) 100%;padding-bottom:240px}
 .resize-handle{position:absolute;z-index:5}
 .resize-handle.n{top:-3px;left:6px;right:6px;height:6px;cursor:n-resize}
 .resize-handle.s{bottom:-3px;left:6px;right:6px;height:6px;cursor:s-resize}
@@ -349,7 +349,23 @@ function showSplitPreview(p){
 }
 function splitProposal(movingRect, targetRect, side){
   if (side === 'left' || side === 'right'){
-    if (targetRect.col_span < MIN_COL * 2) return null;
+    if (targetRect.col_span < MIN_COL * 2){
+      // Target too narrow to split horizontally — fall back to insert beside target,
+      // shifting columns. If there isn't room on that side, insert on the opposite side.
+      const srcSpan = Math.max(MIN_COL, Math.min(COLS, movingRect.col_span));
+      if (side === 'left'){
+        return {
+          mode: 'insertBeforeCol',
+          dragRect: { col_start: Math.max(1, targetRect.col_start - srcSpan), col_span: srcSpan, row_start: targetRect.row_start, row_span: targetRect.row_span },
+          targetRect: { ...targetRect }
+        };
+      }
+      return {
+        mode: 'insertAfterCol',
+        dragRect: { col_start: Math.min(COLS + 1 - srcSpan, targetRect.col_start + targetRect.col_span), col_span: srcSpan, row_start: targetRect.row_start, row_span: targetRect.row_span },
+        targetRect: { ...targetRect }
+      };
+    }
     const dragSpan = Math.max(MIN_COL, Math.min(targetRect.col_span - MIN_COL, Math.round(targetRect.col_span / 2)));
     const targetSpan = targetRect.col_span - dragSpan;
     if (targetSpan < MIN_COL) return null;
@@ -364,7 +380,23 @@ function splitProposal(movingRect, targetRect, side){
       targetRect: { ...targetRect, col_span: targetSpan }
     };
   }
-  if (targetRect.row_span < MIN_ROW * 2) return null;
+  if (targetRect.row_span < MIN_ROW * 2){
+    // Target too short to split vertically — fall back to insert above/below,
+    // pushing down any widgets that collide (handled in mouseup).
+    const srcSpan = Math.max(MIN_ROW, movingRect.row_span);
+    if (side === 'top'){
+      return {
+        mode: 'insertAboveRow',
+        dragRect: { col_start: targetRect.col_start, col_span: targetRect.col_span, row_start: targetRect.row_start, row_span: srcSpan },
+        targetRect: { ...targetRect, row_start: targetRect.row_start + srcSpan }
+      };
+    }
+    return {
+      mode: 'insertBelowRow',
+      dragRect: { col_start: targetRect.col_start, col_span: targetRect.col_span, row_start: targetRect.row_start + targetRect.row_span, row_span: srcSpan },
+      targetRect: { ...targetRect }
+    };
+  }
   const dragSpan = Math.max(MIN_ROW, Math.min(targetRect.row_span - MIN_ROW, Math.round(targetRect.row_span / 2)));
   const targetSpan = targetRect.row_span - dragSpan;
   if (targetSpan < MIN_ROW) return null;
@@ -431,7 +463,7 @@ function proposalFromEmptyArea(items, pos, movingRect, movingId){
   if (!best) return null;
   for (const side of sideCandidatesForPoint(pos, best.r)){
     const p = splitProposal(movingRect, best.r, side);
-    if (p) return { targetId: best.id, dragRect: p.dragRect, targetRect: p.targetRect };
+    if (p) return { targetId: best.id, dragRect: p.dragRect, targetRect: p.targetRect, mode: p.mode };
   }
   return null;
 }
@@ -471,7 +503,7 @@ document.addEventListener('mousemove', e => {
       hidePreviews();
       return;
     }
-    drag.proposal = { targetId: target.id, dragRect: proposal.dragRect, targetRect: proposal.targetRect };
+    drag.proposal = { targetId: target.id, dragRect: proposal.dragRect, targetRect: proposal.targetRect, mode: proposal.mode };
     showSplitPreview(drag.proposal);
     return;
   }
@@ -503,6 +535,29 @@ document.addEventListener('mouseup', async () => {
     if (moving && target){
       let compacted;
       animateLayout(() => {
+        const mode = drag.proposal.mode;
+        // For insert modes, push down/aside any non-moving non-target widget that overlaps
+        // the new drag rect (or the shifted target rect for insertAboveRow).
+        if (mode === 'insertBelowRow' || mode === 'insertAboveRow'){
+          const newDrag = drag.proposal.dragRect;
+          const newTarget = drag.proposal.targetRect;
+          const occupiedTop = Math.min(newDrag.row_start, newTarget.row_start);
+          const occupiedBottom = Math.max(newDrag.row_start + newDrag.row_span, newTarget.row_start + newTarget.row_span);
+          const pushBy = newDrag.row_span;
+          for (const it of items){
+            if (it.id === moving.id || it.id === target.id) continue;
+            // overlap in columns?
+            const cOverlap = !(it.r.col_start + it.r.col_span <= newDrag.col_start || newDrag.col_start + newDrag.col_span <= it.r.col_start);
+            if (!cOverlap) continue;
+            // sits in/below the insertion zone?
+            if (it.r.row_start + it.r.row_span > occupiedTop && it.r.row_start < occupiedBottom){
+              it.r.row_start += pushBy;
+              setRect(it.el, it.r);
+            } else if (mode === 'insertAboveRow' && it.r.row_start >= newTarget.row_start - pushBy && it.r.row_start < newTarget.row_start){
+              // nothing — handled above
+            }
+          }
+        }
         moving.r = drag.proposal.dragRect;
         target.r = drag.proposal.targetRect;
         setRect(moving.el, moving.r);
