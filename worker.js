@@ -64,8 +64,8 @@ button:hover{background:var(--surface-hover)}
 .slot-btn.slot-saved{background:var(--accent);color:#fff;box-shadow:0 0 0 3px rgba(168,85,247,.25)}
 .quick-presets{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .preset-btn{font-size:11px;padding:4px 8px}
-.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:0;grid-auto-rows:80px;position:relative}
-.widget{background:var(--surface);border:1px solid var(--border);border-radius:0;display:flex;flex-direction:column;overflow:hidden;position:relative;min-height:0;transition:box-shadow .15s ease,border-color .15s ease}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;grid-auto-rows:80px;position:relative}
+.widget{background:var(--surface);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;position:relative;min-height:0;transition:box-shadow .15s ease,border-color .15s ease}
 .widget:hover{border-color:var(--accent);box-shadow:0 4px 18px rgba(0,0,0,.35)}
 .widget.dragging{opacity:.55;z-index:12;box-shadow:0 10px 30px rgba(0,0,0,.5)}
 .widget-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-soft);font-size:13px;font-weight:600;cursor:grab;user-select:none}
@@ -82,7 +82,7 @@ button:hover{background:var(--surface-hover)}
 .widget.collapsed{min-height:0}
 .widget-error{color:#f43f5e;font-size:12px}
 .cardtitle-edit{font-size:12px;padding:2px 4px;width:auto}
-.drop-preview{border:2px dashed rgba(168,85,247,.95);background:rgba(168,85,247,.18);z-index:18;pointer-events:none;border-radius:4px;box-shadow:0 0 0 1px rgba(168,85,247,.25) inset;transition:left .08s ease,top .08s ease,width .08s ease,height .08s ease}
+.drop-preview{border:2px dashed rgba(168,85,247,.95);background:rgba(168,85,247,.18);z-index:18;pointer-events:none;border-radius:14px;box-shadow:0 0 0 1px rgba(168,85,247,.25) inset;transition:left .08s ease,top .08s ease,width .08s ease,height .08s ease}
 .drop-preview.target{border-color:rgba(236,72,153,.9);background:rgba(236,72,153,.14);animation:dropPulse 1.1s ease-in-out infinite}
 @keyframes dropPulse{0%,100%{box-shadow:0 0 0 1px rgba(236,72,153,.3) inset}50%{box-shadow:0 0 0 3px rgba(236,72,153,.5) inset}}
 body.is-dragging .grid{background-image:linear-gradient(to right,rgba(168,85,247,.07) 1px,transparent 1px);background-size:calc(100%/12) 100%;padding-bottom:240px}
@@ -289,10 +289,13 @@ async function saveAll(items){
 
 function colRowFromEvent(e){
   const gr = grid.getBoundingClientRect();
-  const colW = gr.width / COLS;
+  const cs = getComputedStyle(grid);
+  const gap = parseFloat(cs.columnGap) || 0;
+  const rowGap = parseFloat(cs.rowGap) || 0;
+  const colW = (gr.width - gap * (COLS - 1)) / COLS;
   const rowH = 80;
-  const c = Math.max(1, Math.min(COLS, Math.floor((e.clientX - gr.left) / colW) + 1));
-  const r = Math.max(1, Math.floor((e.clientY - gr.top) / rowH) + 1);
+  const c = Math.max(1, Math.min(COLS, Math.floor((e.clientX - gr.left) / (colW + gap)) + 1));
+  const r = Math.max(1, Math.floor((e.clientY - gr.top) / (rowH + rowGap)) + 1);
   return { col: c, row: r };
 }
 
