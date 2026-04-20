@@ -139,15 +139,15 @@ input[type=text]{background:var(--surface-soft);border:1px solid var(--border);c
 .blocus .bloc-views{display:flex;gap:4px}
 .bloc-view{font-size:11px;padding:3px 8px}
 .bloc-view.active{background:var(--accent);color:#111;border-color:var(--accent)}
-.bloc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
-.bloc-day-card{background:var(--surface-soft);border:1px solid var(--border);border-radius:12px;overflow:hidden}
-.bloc-day-head{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--border)}
-.bloc-dow{font-size:11px;color:var(--text-secondary);letter-spacing:.04em}
-.bloc-date{font-size:18px;font-weight:700}
-.bloc-period{padding:8px 10px;border-top:1px solid rgba(255,255,255,.04)}
+.bloc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:6px}
+.bloc-day-card{background:var(--surface-soft);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.bloc-day-head{display:flex;justify-content:space-between;align-items:center;padding:4px 8px;border-bottom:1px solid var(--border)}
+.bloc-dow{font-size:10px;color:var(--text-secondary);letter-spacing:.04em}
+.bloc-date{font-size:13px;font-weight:700}
+.bloc-period{padding:4px 6px;border-top:1px solid rgba(255,255,255,.04)}
 .bloc-period:first-of-type{border-top:none}
-.bloc-period-label{font-size:10px;color:var(--text-secondary);font-weight:700;letter-spacing:.08em;margin-bottom:4px;text-transform:uppercase}
-.bloc-slot{border-radius:8px;padding:8px;color:#111;font-size:12px;font-weight:600;min-height:36px;display:flex;align-items:center}
+.bloc-period-label{font-size:9px;color:var(--text-secondary);font-weight:700;letter-spacing:.08em;margin-bottom:2px;text-transform:uppercase}
+.bloc-slot{border-radius:5px;padding:4px 6px;color:#111;font-size:11px;font-weight:600;min-height:22px;display:flex;align-items:center}
 .bloc-slot.empty{background:rgba(255,255,255,.02);border:1px dashed var(--border);color:var(--text-muted);font-weight:500}
 .bloc-slot.exam{outline:2px solid #f43f5e}
 `;
@@ -228,35 +228,8 @@ function clamp(v, min, max){
 
 function compactLayout(items){
   const sorted = [...items].sort((a,b) => (a.r.row_start - b.r.row_start) || (a.r.col_start - b.r.col_start));
-  const bands = new Map();
-  for (const cur of sorted){
-    const key = cur.r.row_start + ':' + cur.r.row_span;
-    if (!bands.has(key)) bands.set(key, []);
-    bands.get(key).push(cur);
-  }
-  // Fill horizontal blanks by expanding adjacent east/west widgets in each row band.
-  for (const line of bands.values()){
-    line.sort((a,b) => a.r.col_start - b.r.col_start);
-    if (!line.length) continue;
-    if (line[0].r.col_start > 1){
-      const gap = line[0].r.col_start - 1;
-      line[0].r.col_start = 1;
-      line[0].r.col_span += gap;
-    }
-    for (let i = 1; i < line.length; i++){
-      const prev = line[i - 1].r;
-      const cur = line[i].r;
-      const prevEnd = prev.col_start + prev.col_span;
-      if (cur.col_start > prevEnd){
-        prev.col_span += (cur.col_start - prevEnd);
-      }
-    }
-    const last = line[line.length - 1].r;
-    const lastEnd = last.col_start + last.col_span;
-    if (lastEnd < COLS + 1){
-      last.col_span += (COLS + 1 - lastEnd);
-    }
-  }
+  // Widgets keep their natural column span — no horizontal auto-expansion.
+  // Only vertical compaction runs below, and we clamp positions into grid bounds.
   for (const cur of sorted){
     const maxColStart = COLS - cur.r.col_span + 1;
     cur.r.col_start = Math.max(1, Math.min(maxColStart, cur.r.col_start));
