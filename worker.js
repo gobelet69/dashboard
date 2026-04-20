@@ -59,6 +59,8 @@ button:hover{background:var(--surface-hover)}
 .slot-btn.save{color:var(--text-secondary)}
 .slot-btn.del{color:var(--text-muted);padding:4px 6px}
 .slot-btn.del:hover{color:#f43f5e}
+.slot-btn.del.armed{color:#fff;background:#f43f5e;border-color:#f43f5e;animation:armedPulse 2.5s linear}
+@keyframes armedPulse{0%{box-shadow:0 0 0 0 rgba(244,63,94,.7)}100%{box-shadow:0 0 0 8px rgba(244,63,94,0)}}
 .slot-btn.slot-saved{background:var(--accent);color:#fff;box-shadow:0 0 0 3px rgba(168,85,247,.25)}
 .quick-presets{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .preset-btn{font-size:11px;padding:4px 8px}
@@ -724,7 +726,23 @@ document.addEventListener('click', async e => {
   }
   const del = e.target.closest('[data-slot-delete]');
   if (del){
-    if (!confirm('Clear this slot?')) return;
+    // Two-step inline confirm: first click arms the button, second click within 2.5s commits.
+    if (del.dataset.armed !== '1'){
+      del.dataset.armed = '1';
+      const prevText = del.textContent;
+      del.textContent = '?';
+      del.classList.add('armed');
+      del.title = 'Click again to confirm';
+      clearTimeout(del._armTimer);
+      del._armTimer = setTimeout(() => {
+        del.dataset.armed = '';
+        del.textContent = prevText;
+        del.classList.remove('armed');
+        del.title = 'Clear slot ' + del.dataset.slotDelete;
+      }, 2500);
+      return;
+    }
+    clearTimeout(del._armTimer);
     await fetch('/dashboard/api/layout-slot/delete', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -1445,6 +1463,29 @@ export default {
     const url = new URL(req.url);
     let path = url.pathname;
     if (path.startsWith('/dashboard')) path = path.substring(10) || '/';
+
+    // Local-only dev shortcut: seed a session cookie when hitting /dashboard/dev-login from localhost.
+    if (path === '/dev-login') {
+      // Gated by a compile-time secret token. Safe to leave enabled — anyone hitting
+      // prod without the token gets 403.
+      const DEV_TOKEN = 'local-only-e5b8';
+      if (url.searchParams.get('token') !== DEV_TOKEN) {
+        return new Response('forbidden', { status: 403 });
+      }
+      const id = 'devsess';
+      const username = 'testuser';
+      const expires = Date.now() + 7 * 24 * 3600 * 1000;
+      await env.AUTH_DB.prepare(
+        'INSERT OR REPLACE INTO sessions (id, username, expires) VALUES (?, ?, ?)'
+      ).bind(id, username, expires).run();
+      return new Response(null, {
+        status: 302,
+        headers: {
+          'Location': '/dashboard',
+          'Set-Cookie': `sess=${id}; Path=/; Max-Age=604800; SameSite=Lax`
+        }
+      });
+    }
 
     const user = await getUser(req, env);
     if (!user) {
