@@ -64,6 +64,9 @@ button:hover{background:var(--surface-hover)}
 .slot-btn.slot-saved{background:var(--accent);color:#fff;box-shadow:0 0 0 3px rgba(168,85,247,.25)}
 .quick-presets{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .preset-btn{font-size:11px;padding:4px 8px}
+.zoom-controls{display:flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:8px;padding:2px}
+.zoom-controls .preset-btn{border:none;padding:3px 9px;min-width:24px;font-size:12px;font-weight:600}
+.zoom-controls .preset-btn:hover{background:var(--surface-hover)}
 .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;grid-auto-rows:80px;position:relative}
 .widget{background:var(--surface);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;position:relative;min-height:0;transition:box-shadow .15s ease,border-color .15s ease}
 .widget:hover{border-color:var(--accent);box-shadow:0 4px 18px rgba(0,0,0,.35)}
@@ -158,6 +161,26 @@ const COLS = 12;
 const MIN_COL = 3;
 const MIN_ROW = 2;
 
+// Zoom: scales grid-auto-rows so all widgets get taller/shorter together.
+const ZOOM_MIN = 0.6, ZOOM_MAX = 2.0, ZOOM_STEP = 0.1, BASE_ROW_H = 80;
+let zoom = parseFloat(localStorage.getItem('dash.zoom') || '1') || 1;
+function applyZoom(){
+  zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom));
+  if (grid) grid.style.gridAutoRows = Math.round(BASE_ROW_H * zoom) + 'px';
+  const lbl = document.getElementById('zoomLabel');
+  if (lbl) lbl.textContent = Math.round(zoom * 100) + '%';
+  localStorage.setItem('dash.zoom', String(zoom));
+}
+applyZoom();
+document.addEventListener('click', e => {
+  const z = e.target.closest('[data-zoom]');
+  if (!z) return;
+  const v = z.dataset.zoom;
+  if (v === 'reset') zoom = 1;
+  else zoom += Number(v) * ZOOM_STEP;
+  applyZoom();
+});
+
 async function refreshPage(){
   const r = await fetch('/dashboard', { headers: { Accept: 'text/html' }, cache: 'no-store' });
   if (!r.ok) return;
@@ -170,6 +193,7 @@ async function refreshPage(){
   if (newGrid && curGrid) curGrid.replaceWith(newGrid);
   if (newTopbar && curTopbar) curTopbar.replaceWith(newTopbar);
   grid = document.getElementById('grid');
+  if (typeof applyZoom === 'function') applyZoom();
 }
 
 function flash(el, cls = 'flash'){
@@ -293,7 +317,7 @@ function colRowFromEvent(e){
   const gap = parseFloat(cs.columnGap) || 0;
   const rowGap = parseFloat(cs.rowGap) || 0;
   const colW = (gr.width - gap * (COLS - 1)) / COLS;
-  const rowH = 80;
+  const rowH = Math.round(BASE_ROW_H * zoom);
   const c = Math.max(1, Math.min(COLS, Math.floor((e.clientX - gr.left) / (colW + gap)) + 1));
   const r = Math.max(1, Math.floor((e.clientY - gr.top) / (rowH + rowGap)) + 1);
   return { col: c, row: r };
@@ -389,10 +413,14 @@ function splitProposal(movingRect, targetRect, side){
 }
 function edgeSide(targetEl, e){
   const r = targetEl.getBoundingClientRect();
-  const left = Math.abs(e.clientX - r.left);
-  const right = Math.abs(r.right - e.clientX);
-  const top = Math.abs(e.clientY - r.top);
-  const bottom = Math.abs(r.bottom - e.clientY);
+  // Normalize distances by the widget's width/height so a very wide (or very tall)
+  // widget still lets you pick its short edges (right/left on a tall widget, top/bottom on a wide one).
+  const w = Math.max(1, r.width);
+  const h = Math.max(1, r.height);
+  const left = Math.abs(e.clientX - r.left) / w;
+  const right = Math.abs(r.right - e.clientX) / w;
+  const top = Math.abs(e.clientY - r.top) / h;
+  const bottom = Math.abs(r.bottom - e.clientY) / h;
   const min = Math.min(left, right, top, bottom);
   if (min === left) return 'left';
   if (min === right) return 'right';
@@ -1349,6 +1377,11 @@ ${renderHeader(user)}
       <button class="preset-btn" data-preset-layout="balanced">Preset Balanced</button>
       <button class="preset-btn" data-preset-layout="focus">Preset Focus</button>
       <button class="preset-btn" data-preset-layout="columns">Preset Columns</button>
+    </div>
+    <div class="zoom-controls" title="Zoom widget rows">
+      <button class="preset-btn" data-zoom="-1" title="Zoom out">−</button>
+      <button class="preset-btn" data-zoom="reset" title="Reset zoom" id="zoomLabel">100%</button>
+      <button class="preset-btn" data-zoom="1" title="Zoom in">+</button>
     </div>
     <div class="add-widget">
       <button data-add-toggle>+ Add widget</button>
