@@ -80,6 +80,10 @@ button:hover{background:var(--surface-hover)}
 .widget-header .hdr-actions{display:flex;align-items:center;gap:2px}
 .widget-header .close,.widget-header .collapse{background:transparent;border:none;color:var(--text-muted);font-size:16px;line-height:1;padding:2px 6px;cursor:pointer}
 .widget-header .close:hover,.widget-header .collapse:hover{color:var(--text)}
+.widget-header .wz{background:transparent;border:none;color:var(--text-muted);font-size:12px;line-height:1;padding:2px 5px;cursor:pointer;opacity:.55;transition:opacity .15s ease,color .15s ease}
+.widget-header:hover .wz{opacity:1}
+.widget-header .wz:hover{color:var(--text)}
+.widget-body{zoom:var(--wzoom,1)}
 .widget-body{flex:1;overflow:auto;padding:12px;font-size:13px}
 .widget.collapsed .widget-body{display:none}
 .widget.collapsed{min-height:0}
@@ -181,6 +185,42 @@ document.addEventListener('click', e => {
   applyZoom();
 });
 
+// Per-widget content zoom (scales the body via CSS zoom, doesn't change the widget's grid footprint).
+const WZOOM_MIN = 0.6, WZOOM_MAX = 2.0, WZOOM_STEP = 0.1;
+function wzoomStore(){
+  try { return JSON.parse(localStorage.getItem('dash.wzoom') || '{}') || {}; } catch { return {}; }
+}
+function wzoomSave(map){ localStorage.setItem('dash.wzoom', JSON.stringify(map)); }
+function applyWidgetZooms(){
+  const map = wzoomStore();
+  document.querySelectorAll('.widget').forEach(el => {
+    const id = el.dataset.instance;
+    const z = map[id];
+    if (z && z !== 1) el.style.setProperty('--wzoom', String(z));
+    else el.style.removeProperty('--wzoom');
+  });
+}
+applyWidgetZooms();
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-wzoom]');
+  if (!btn) return;
+  e.stopPropagation();
+  const id = btn.dataset.wid;
+  if (!id) return;
+  const map = wzoomStore();
+  let z = map[id] || 1;
+  const v = btn.dataset.wzoom;
+  if (v === 'reset') z = 1;
+  else z = Math.max(WZOOM_MIN, Math.min(WZOOM_MAX, z + Number(v) * WZOOM_STEP));
+  if (z === 1) delete map[id]; else map[id] = z;
+  wzoomSave(map);
+  const el = document.querySelector('.widget[data-instance="' + CSS.escape(id) + '"]');
+  if (el){
+    if (z === 1) el.style.removeProperty('--wzoom');
+    else el.style.setProperty('--wzoom', String(z));
+  }
+});
+
 async function refreshPage(){
   const r = await fetch('/dashboard', { headers: { Accept: 'text/html' }, cache: 'no-store' });
   if (!r.ok) return;
@@ -194,6 +234,7 @@ async function refreshPage(){
   if (newTopbar && curTopbar) curTopbar.replaceWith(newTopbar);
   grid = document.getElementById('grid');
   if (typeof applyZoom === 'function') applyZoom();
+  if (typeof applyWidgetZooms === 'function') applyWidgetZooms();
 }
 
 function flash(el, cls = 'flash'){
@@ -477,6 +518,8 @@ let drag = null;
 document.addEventListener('mousedown', e => {
   if (e.target.closest('[data-close]')) return;
   if (e.target.closest('[data-resize]')) return;
+  if (e.target.closest('[data-wzoom]')) return;
+  if (e.target.closest('[data-collapse]')) return;
   const h = e.target.closest('[data-drag]');
   if (!h) return;
   const el = h.closest('.widget');
@@ -1346,6 +1389,9 @@ function renderPage(user, layout, bodies, slots = {}) {
       <div class="widget-header" data-drag="${esc(w.instance_id)}">
         <div class="title"><span class="grip" aria-hidden="true">⋮⋮</span>${label}</div>
         <div class="hdr-actions">
+          <button class="wz" data-wzoom="-1" data-wid="${esc(w.instance_id)}" title="Shrink content">−</button>
+          <button class="wz" data-wzoom="reset" data-wid="${esc(w.instance_id)}" title="Reset content size">⟲</button>
+          <button class="wz" data-wzoom="1" data-wid="${esc(w.instance_id)}" title="Enlarge content">+</button>
           <button class="collapse" data-collapse="${esc(w.instance_id)}" title="${collapsed ? 'Expand' : 'Collapse'}">${collapsed ? '+' : '−'}</button>
           <button class="close" data-close="${esc(w.instance_id)}" title="Close">×</button>
         </div>
